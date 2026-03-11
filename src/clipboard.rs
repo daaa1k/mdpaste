@@ -18,12 +18,9 @@ pub fn get_clipboard_image() -> Result<Vec<u8>> {
 #[cfg(target_os = "macos")]
 fn clipboard_macos() -> Result<Vec<u8>> {
     // pngpaste writes PNG bytes to stdout when given "-"
-    let out = Command::new("pngpaste")
-        .arg("-")
-        .output()
-        .map_err(|_| {
-            anyhow::anyhow!("pngpaste not found – install it with: brew install pngpaste")
-        })?;
+    let out = Command::new("pngpaste").arg("-").output().map_err(|_| {
+        anyhow::anyhow!("pngpaste not found – install it with: brew install pngpaste")
+    })?;
 
     if !out.status.success() || out.stdout.is_empty() {
         bail!("No image found in clipboard");
@@ -99,7 +96,9 @@ fn clipboard_wsl() -> Result<Vec<u8>> {
     let out = Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", ps_script])
         .output()
-        .map_err(|_| anyhow::anyhow!("powershell.exe not found – ensure WSL2 interop is enabled"))?;
+        .map_err(|_| {
+            anyhow::anyhow!("powershell.exe not found – ensure WSL2 interop is enabled")
+        })?;
 
     if out.status.success() && !out.stdout.is_empty() {
         return Ok(out.stdout);
@@ -109,7 +108,11 @@ fn clipboard_wsl() -> Result<Vec<u8>> {
     let out = Command::new("win32yank.exe")
         .arg("-o")
         .output()
-        .map_err(|_| anyhow::anyhow!("No image in Windows clipboard (powershell.exe failed and win32yank.exe not found)"))?;
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "No image in Windows clipboard (powershell.exe failed and win32yank.exe not found)"
+            )
+        })?;
 
     if out.status.success() && !out.stdout.is_empty() {
         // win32yank outputs raw clipboard data; verify it looks like a PNG (magic bytes 89 50 4E 47)

@@ -36,11 +36,11 @@ async fn run() -> Result<()> {
                 .r2
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("[r2] section missing in .mdpaste.toml"))?;
-            let r2_global = config
-                .global
-                .r2
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("[r2] credentials missing in global config (~/.config/mdpaste/config.toml)"))?;
+            let r2_global = config.global.r2.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "[r2] credentials missing in global config (~/.config/mdpaste/config.toml)"
+                )
+            })?;
             let b = backend::r2::R2Backend::new(r2_global, r2_project).await?;
             b.save(&image_data, &filename).await?
         }

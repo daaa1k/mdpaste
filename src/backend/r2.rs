@@ -17,12 +17,10 @@ pub struct R2Backend {
 
 impl R2Backend {
     pub async fn new(global: &R2GlobalConfig, project: &R2ProjectConfig) -> Result<Self> {
-        let endpoint = global.endpoint.clone().unwrap_or_else(|| {
-            format!(
-                "https://{}.r2.cloudflarestorage.com",
-                global.account_id
-            )
-        });
+        let endpoint = global
+            .endpoint
+            .clone()
+            .unwrap_or_else(|| format!("https://{}.r2.cloudflarestorage.com", global.account_id));
 
         let creds = Credentials::new(
             &global.access_key,

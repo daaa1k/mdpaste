@@ -7,7 +7,9 @@ pub struct LocalBackend {
 
 impl LocalBackend {
     pub fn new(dir: &str) -> Self {
-        LocalBackend { dir: dir.to_string() }
+        LocalBackend {
+            dir: dir.to_string(),
+        }
     }
 
     /// Save `image` bytes to `<dir>/<filename>` and return a relative Markdown URL.

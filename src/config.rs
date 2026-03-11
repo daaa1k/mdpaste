@@ -95,8 +95,7 @@ fn load_global_config() -> Result<GlobalConfig> {
     if path.exists() {
         let src = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
-        return toml::from_str(&src)
-            .with_context(|| format!("parsing {}", path.display()));
+        return toml::from_str(&src).with_context(|| format!("parsing {}", path.display()));
     }
     Ok(GlobalConfig::default())
 }
