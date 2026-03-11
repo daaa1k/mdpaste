@@ -1,0 +1,19 @@
+[package]
+name = "mdpaste"
+version = "0.1.0"
+edition = "2021"
+description = "Paste clipboard image as Markdown link"
+
+[[bin]]
+name = "mdpaste"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+anyhow = "1"
+chrono = "0.4"
+tokio = { version = "1", features = ["full"] }
+aws-sdk-s3 = "1"
+aws-credential-types = { version = "1", features = ["hardcoded-credentials"] }
