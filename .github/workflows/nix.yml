@@ -29,12 +29,11 @@ jobs:
           name: daaa1k
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
-      # Build the package first so that the derivation (and its
-      # dependencies) are pushed to Cachix by the post-build hook.
+      # Use cachix watch-exec to explicitly capture and push all
+      # store paths created during the build to the Cachix cache.
       - name: nix build
-        run: nix build
+        run: cachix watch-exec daaa1k -- nix build
 
-      # Run all flake checks (build, fmt, clippy, tests).
-      # Cached build artifacts from the previous step are reused.
+      # Flake checks reuse cached artifacts from the build above.
       - name: nix flake check
         run: nix flake check
