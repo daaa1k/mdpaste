@@ -55,7 +55,7 @@ impl R2Backend {
             .bucket(&self.bucket)
             .key(&key)
             .body(ByteStream::from(image.to_vec()))
-            .content_type("image/png")
+            .content_type("image/webp")
             .send()
             .await
             .map_err(|e| anyhow::anyhow!("R2 upload failed: {e}"))?;
