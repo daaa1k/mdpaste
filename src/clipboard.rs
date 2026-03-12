@@ -3,16 +3,16 @@ use std::process::Command;
 
 use crate::config::WslConfig;
 
-/// Return WebP image bytes from the system clipboard.
+/// Return WebP image bytes for all images/files found in the system clipboard.
 ///
 /// Supports two clipboard content types:
-///   - Image data (e.g. screenshots, "Copy Image" in browsers)
-///   - File drop (files copied in Finder / Explorer / file managers)
+///   - Image data (e.g. screenshots, "Copy Image" in browsers) → one entry
+///   - File drop (files copied in Finder / Explorer / file managers) → one entry per file
 ///
-/// The returned bytes are always WebP regardless of the source format.
-pub fn get_clipboard_image(wsl_config: Option<&WslConfig>) -> Result<Vec<u8>> {
-    let raw = get_raw_image_bytes(wsl_config)?;
-    convert_to_webp(&raw)
+/// All returned byte slices are WebP regardless of the source format.
+pub fn get_clipboard_images(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
+    let raws = get_raw_images_bytes(wsl_config)?;
+    raws.iter().map(|raw| convert_to_webp(raw)).collect()
 }
 
 fn convert_to_webp(raw: &[u8]) -> Result<Vec<u8>> {
@@ -27,7 +27,7 @@ fn convert_to_webp(raw: &[u8]) -> Result<Vec<u8>> {
     Ok(webp_data)
 }
 
-fn get_raw_image_bytes(wsl_config: Option<&WslConfig>) -> Result<Vec<u8>> {
+fn get_raw_images_bytes(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
     #[cfg(target_os = "macos")]
     {
         let _ = wsl_config;
@@ -44,36 +44,56 @@ fn get_raw_image_bytes(wsl_config: Option<&WslConfig>) -> Result<Vec<u8>> {
 // ── macOS ────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
-fn get_raw_macos() -> Result<Vec<u8>> {
+fn get_raw_macos() -> Result<Vec<Vec<u8>>> {
     // pngpaste reads image data from clipboard and outputs PNG bytes to stdout.
     if let Ok(out) = Command::new("pngpaste").arg("-").output() {
         if out.status.success() && !out.stdout.is_empty() {
-            return Ok(out.stdout);
+            return Ok(vec![out.stdout]);
         }
     }
 
-    // FileDrop: try to read a file path from the clipboard via AppleScript.
+    // FileDrop: read all file paths from the clipboard via AppleScript.
+    // `{«class furl»}` coercion returns a list even when a single file is copied.
     let out = Command::new("osascript")
         .args([
             "-e",
+            "set output to \"\"",
+            "-e",
             "try",
             "-e",
-            "POSIX path of (the clipboard as \u{ab}class furl\u{bb})",
+            &format!("set fileList to (the clipboard as {{\u{ab}class furl\u{bb}}})"),
+            "-e",
+            "repeat with f in fileList",
+            "-e",
+            "set output to output & POSIX path of f & linefeed",
+            "-e",
+            "end repeat",
             "-e",
             "on error",
             "-e",
-            "\"\"",
-            "-e",
             "end try",
+            "-e",
+            "output",
         ])
         .output()
         .map_err(|_| anyhow::anyhow!("osascript not found"))?;
 
     if out.status.success() {
-        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !path.is_empty() {
-            return std::fs::read(&path)
-                .map_err(|e| anyhow::anyhow!("Failed to read file '{path}': {e}"));
+        let text = String::from_utf8_lossy(&out.stdout);
+        let paths: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        if !paths.is_empty() {
+            let images: Result<Vec<Vec<u8>>> = paths
+                .iter()
+                .map(|path| {
+                    std::fs::read(path)
+                        .map_err(|e| anyhow::anyhow!("Failed to read file '{path}': {e}"))
+                })
+                .collect();
+            return images;
         }
     }
 
@@ -83,7 +103,7 @@ fn get_raw_macos() -> Result<Vec<u8>> {
 // ── Linux / WSL2 ─────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "linux")]
-fn get_raw_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<u8>> {
+fn get_raw_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
     if is_wsl() {
         return get_raw_wsl(wsl_config);
     }
@@ -95,7 +115,7 @@ fn get_raw_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<u8>> {
             .output()
         {
             if out.status.success() && !out.stdout.is_empty() {
-                return Ok(out.stdout);
+                return Ok(vec![out.stdout]);
             }
         }
     }
@@ -107,7 +127,7 @@ fn get_raw_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<u8>> {
             .output()
         {
             if out.status.success() && !out.stdout.is_empty() {
-                return Ok(out.stdout);
+                return Ok(vec![out.stdout]);
             }
         }
     }
@@ -119,9 +139,9 @@ fn get_raw_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<u8>> {
     {
         if out.status.success() && !out.stdout.is_empty() {
             let uris = String::from_utf8_lossy(&out.stdout);
-            if let Some(path) = parse_first_file_uri(&uris) {
-                return std::fs::read(&path)
-                    .map_err(|e| anyhow::anyhow!("Failed to read file '{path}': {e}"));
+            let paths = parse_all_file_uris(&uris);
+            if !paths.is_empty() {
+                return read_all_files(&paths);
             }
         }
     }
@@ -133,9 +153,9 @@ fn get_raw_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<u8>> {
     {
         if out.status.success() && !out.stdout.is_empty() {
             let uris = String::from_utf8_lossy(&out.stdout);
-            if let Some(path) = parse_first_file_uri(&uris) {
-                return std::fs::read(&path)
-                    .map_err(|e| anyhow::anyhow!("Failed to read file '{path}': {e}"));
+            let paths = parse_all_file_uris(&uris);
+            if !paths.is_empty() {
+                return read_all_files(&paths);
             }
         }
     }
@@ -144,7 +164,7 @@ fn get_raw_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<u8>> {
 }
 
 #[cfg(target_os = "linux")]
-fn get_raw_wsl(wsl_config: Option<&WslConfig>) -> Result<Vec<u8>> {
+fn get_raw_wsl(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
     let ps = resolve_powershell(wsl_config);
 
     if let Some(ref ps) = ps {
@@ -159,15 +179,21 @@ fn get_raw_wsl(wsl_config: Option<&WslConfig>) -> Result<Vec<u8>> {
             "[Console]::OpenStandardOutput().Write($b,0,$b.Length)"
         );
         if let Ok(out) = Command::new(ps)
-            .args(["-Sta", "-NoProfile", "-NonInteractive", "-Command", ps_image])
+            .args([
+                "-Sta",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                ps_image,
+            ])
             .output()
         {
             if out.status.success() && !out.stdout.is_empty() {
-                return Ok(out.stdout);
+                return Ok(vec![out.stdout]);
             }
         }
 
-        // FileDrop: get first Windows file path from clipboard, then convert to WSL path.
+        // FileDrop: get all Windows file paths from clipboard, then convert to WSL paths.
         // OutputEncoding must be set to UTF-8 to handle non-ASCII paths correctly.
         // -Sta is required for System.Windows.Forms.Clipboard (STA apartment model).
         let ps_files = concat!(
@@ -175,27 +201,47 @@ fn get_raw_wsl(wsl_config: Option<&WslConfig>) -> Result<Vec<u8>> {
             "Add-Type -Assembly System.Windows.Forms;",
             "$files=[System.Windows.Forms.Clipboard]::GetFileDropList();",
             "if($files -eq $null -or $files.Count -eq 0){exit 1};",
-            "Write-Output $files[0]"
+            "foreach($f in $files){Write-Output $f}"
         );
         if let Ok(out) = Command::new(ps)
-            .args(["-Sta", "-NoProfile", "-NonInteractive", "-Command", ps_files])
+            .args([
+                "-Sta",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                ps_files,
+            ])
             .output()
         {
             if out.status.success() && !out.stdout.is_empty() {
-                let win_path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !win_path.is_empty() {
-                    let wsl_out = Command::new("wslpath")
-                        .args(["-u", &win_path])
-                        .output()
-                        .map_err(|_| {
-                            anyhow::anyhow!("wslpath not found – ensure WSL2 interop is enabled")
-                        })?;
-                    if wsl_out.status.success() {
-                        let wsl_path =
-                            String::from_utf8_lossy(&wsl_out.stdout).trim().to_string();
-                        return std::fs::read(&wsl_path).map_err(|e| {
-                            anyhow::anyhow!("Failed to read file '{wsl_path}': {e}")
-                        });
+                let output = String::from_utf8_lossy(&out.stdout);
+                let win_paths: Vec<&str> = output
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .collect();
+                if !win_paths.is_empty() {
+                    let mut images = Vec::new();
+                    for win_path in win_paths {
+                        let wsl_out = Command::new("wslpath")
+                            .args(["-u", win_path])
+                            .output()
+                            .map_err(|_| {
+                                anyhow::anyhow!(
+                                    "wslpath not found – ensure WSL2 interop is enabled"
+                                )
+                            })?;
+                        if wsl_out.status.success() {
+                            let wsl_path =
+                                String::from_utf8_lossy(&wsl_out.stdout).trim().to_string();
+                            let data = std::fs::read(&wsl_path).map_err(|e| {
+                                anyhow::anyhow!("Failed to read file '{wsl_path}': {e}")
+                            })?;
+                            images.push(data);
+                        }
+                    }
+                    if !images.is_empty() {
+                        return Ok(images);
                     }
                 }
             }
@@ -208,7 +254,7 @@ fn get_raw_wsl(wsl_config: Option<&WslConfig>) -> Result<Vec<u8>> {
         .unwrap_or("win32yank.exe");
     if let Ok(out) = Command::new(win32yank).arg("-o").output() {
         if out.status.success() && out.stdout.starts_with(b"\x89PNG") {
-            return Ok(out.stdout);
+            return Ok(vec![out.stdout]);
         }
     }
 
@@ -273,10 +319,11 @@ fn is_wsl() -> bool {
         .unwrap_or(false)
 }
 
-/// Parse the first `file://` URI from a `text/uri-list` payload and return the
-/// decoded filesystem path.  Lines starting with `#` are comments (RFC 2483).
+/// Parse all `file://` URIs from a `text/uri-list` payload and return the
+/// decoded filesystem paths.  Lines starting with `#` are comments (RFC 2483).
 #[cfg(target_os = "linux")]
-fn parse_first_file_uri(uris: &str) -> Option<String> {
+fn parse_all_file_uris(uris: &str) -> Vec<String> {
+    let mut paths = Vec::new();
     for line in uris.lines() {
         let line = line.trim();
         if line.starts_with('#') || line.is_empty() {
@@ -288,12 +335,26 @@ fn parse_first_file_uri(uris: &str) -> Option<String> {
                 rest.to_string()
             } else {
                 // skip the authority component
-                rest.split_once('/').map(|x| format!("/{}", x.1))?
+                match rest.split_once('/') {
+                    Some(x) => format!("/{}", x.1),
+                    None => continue,
+                }
             };
-            return Some(url_decode(&path));
+            paths.push(url_decode(&path));
         }
     }
-    None
+    paths
+}
+
+/// Read all files and return their bytes, failing fast on the first error.
+#[cfg(target_os = "linux")]
+fn read_all_files(paths: &[String]) -> Result<Vec<Vec<u8>>> {
+    paths
+        .iter()
+        .map(|path| {
+            std::fs::read(path).map_err(|e| anyhow::anyhow!("Failed to read file '{path}': {e}"))
+        })
+        .collect()
 }
 
 /// Percent-decode a URI path component.
