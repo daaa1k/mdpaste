@@ -138,7 +138,10 @@
         # --- devShell ---------------------------------------------------
         devShells.default = devenv.lib.mkShell {
           inherit inputs pkgs;
-          modules = [ ./devenv.nix ];
+          modules = [
+            { root = ./.; }
+            ./devenv.nix
+          ];
         };
       }
     ) // {
