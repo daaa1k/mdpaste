@@ -216,6 +216,7 @@ fn is_wsl() -> bool {
 
 /// Parse the first `file://` URI from a `text/uri-list` payload and return the
 /// decoded filesystem path.  Lines starting with `#` are comments (RFC 2483).
+#[cfg(target_os = "linux")]
 fn parse_first_file_uri(uris: &str) -> Option<String> {
     for line in uris.lines() {
         let line = line.trim();
@@ -228,7 +229,7 @@ fn parse_first_file_uri(uris: &str) -> Option<String> {
                 rest.to_string()
             } else {
                 // skip the authority component
-                rest.splitn(2, '/').nth(1).map(|p| format!("/{p}"))?
+                rest.split_once('/').map(|x| format!("/{}", x.1))?
             };
             return Some(url_decode(&path));
         }
@@ -237,6 +238,7 @@ fn parse_first_file_uri(uris: &str) -> Option<String> {
 }
 
 /// Percent-decode a URI path component.
+#[cfg(target_os = "linux")]
 fn url_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut result: Vec<u8> = Vec::with_capacity(bytes.len());
