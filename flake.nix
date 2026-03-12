@@ -5,11 +5,9 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     crane.url = "github:ipetkov/crane";
-    devenv.url = "github:cachix/devenv";
-    devenv.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, flake-utils, crane, devenv } @ inputs:
+  outputs = { self, nixpkgs, flake-utils, crane }:
     let
       # Home Manager module — system-agnostic, exported at the top level.
       #
@@ -136,11 +134,11 @@
         };
 
         # --- devShell ---------------------------------------------------
-        devShells.default = devenv.lib.mkShell {
-          inherit inputs pkgs;
-          modules = [
-            { root = ./.; }
-            ./devenv.nix
+        devShells.default = craneLib.devShell {
+          checks = self.checks.${system};
+          packages = [
+            pkgs.rust-analyzer
+            pkgs.rustfmt
           ];
         };
       }
