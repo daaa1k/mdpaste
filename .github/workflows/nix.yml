@@ -30,14 +30,20 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       # Run all flake checks (build, clippy, tests).
+      # The checks derivations are built and stored in the Nix store here.
       - name: nix flake check
         run: nix flake check
 
-      # Explicitly push the built package and its full closure to Cachix.
-      # cachix-action's automatic push may not capture all paths when using
-      # DeterminateSystems nix-installer, so we push explicitly here.
+      # Push the already-built check outputs and their closures to Cachix.
+      # We reference .#checks.${SYSTEM}.* (not .#packages) to avoid any
+      # rebuilds — these exact derivations were just built by nix flake check.
       - name: Push to Cachix
         run: |
-          nix build .#mdpaste --no-link --print-out-paths \
+          SYSTEM=$(nix eval --raw --impure --expr 'builtins.currentSystem')
+          nix build \
+            ".#checks.${SYSTEM}.mdpaste" \
+            ".#checks.${SYSTEM}.mdpaste-clippy" \
+            ".#checks.${SYSTEM}.mdpaste-test" \
+            --no-link --print-out-paths \
             | xargs nix-store -qR \
             | cachix push daaa1k
