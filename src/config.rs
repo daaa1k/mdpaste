@@ -49,17 +49,11 @@ pub struct WslConfig {
     /// "/mnt/c/Program Files/PowerShell/7/pwsh.exe"
     #[cfg(target_os = "linux")]
     pub powershell_path: Option<String>,
-    /// Full path to win32yank.exe, e.g.
-    /// "/mnt/c/Users/you/AppData/Local/Microsoft/WinGet/Links/win32yank.exe"
-    #[cfg(target_os = "linux")]
-    pub win32yank_path: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct R2GlobalConfig {
     pub account_id: String,
-    pub access_key: String,
-    pub secret_key: String,
     /// Override the endpoint URL (defaults to https://<account_id>.r2.cloudflarestorage.com)
     pub endpoint: Option<String>,
 }
@@ -233,14 +227,10 @@ prefix = "images/"
         let src = r#"
 [r2]
 account_id = "abc123"
-access_key = "key"
-secret_key = "secret"
 "#;
         let cfg: GlobalConfig = toml::from_str(src).unwrap();
         let r2 = cfg.r2.unwrap();
         assert_eq!(r2.account_id, "abc123");
-        assert_eq!(r2.access_key, "key");
-        assert_eq!(r2.secret_key, "secret");
         assert!(r2.endpoint.is_none());
     }
 
@@ -254,7 +244,6 @@ powershell_path = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
         let cfg: GlobalConfig = toml::from_str(src).unwrap();
         let wsl = cfg.wsl.unwrap();
         assert!(wsl.powershell_path.is_some());
-        assert!(wsl.win32yank_path.is_none());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{
     config::{BehaviorVersion, Region},
@@ -22,13 +22,12 @@ impl R2Backend {
             .clone()
             .unwrap_or_else(|| format!("https://{}.r2.cloudflarestorage.com", global.account_id));
 
-        let creds = Credentials::new(
-            &global.access_key,
-            &global.secret_key,
-            None,
-            None,
-            "mdpaste",
-        );
+        let access_key = std::env::var("R2_ACCESS_KEY_ID")
+            .context("R2_ACCESS_KEY_ID environment variable not set")?;
+        let secret_key = std::env::var("R2_SECRET_ACCESS_KEY")
+            .context("R2_SECRET_ACCESS_KEY environment variable not set")?;
+
+        let creds = Credentials::new(&access_key, &secret_key, None, None, "mdpaste");
 
         let conf = aws_sdk_s3::Config::builder()
             .behavior_version(BehaviorVersion::latest())

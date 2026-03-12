@@ -10,7 +10,7 @@ A CLI tool that reads an image from the clipboard, saves it as a WebP file, and 
   - **Local**: saves to a local directory (default: `images/`)
   - **R2**: uploads to Cloudflare R2 and returns a public URL
 - Backend selection: CLI flag > project config > global config > local (fallback)
-- WSL2 support with configurable executable paths for PowerShell and win32yank
+- WSL2 support with configurable executable path for PowerShell
 
 ## Installation
 
@@ -52,27 +52,33 @@ prefix     = "images/"   # optional key prefix
 
 ### Global config (`~/.config/mdpaste/config.toml`)
 
-Stores credentials and machine-level defaults. Respects `XDG_CONFIG_HOME`.
+Stores machine-level defaults. Respects `XDG_CONFIG_HOME`.
 
 ```toml
 backend = "local"   # default backend
 
 [r2]
 account_id = "..."
-access_key = "..."
-secret_key = "..."
 endpoint   = "https://..."   # optional, defaults to https://<account_id>.r2.cloudflarestorage.com
 
 [wsl]
-# Optional: specify absolute paths when Windows executables are not in PATH
+# Optional: specify absolute path when PowerShell is not in PATH
 # (e.g., when appendWindowsPath = false in /etc/wsl.conf)
 powershell_path = "/mnt/c/Program Files/PowerShell/7/pwsh.exe"
-win32yank_path  = "/mnt/c/Users/you/AppData/Local/Microsoft/WinGet/Links/win32yank.exe"
+```
+
+### R2 credentials (environment variables)
+
+R2 access credentials are read from environment variables:
+
+```sh
+export R2_ACCESS_KEY_ID="your-access-key"
+export R2_SECRET_ACCESS_KEY="your-secret-key"
 ```
 
 ## WSL2 Notes
 
-On WSL2, mdpaste uses PowerShell to access the Windows clipboard. If Windows executables are not in PATH (e.g., `appendWindowsPath = false` in `/etc/wsl.conf`), specify their absolute paths in the `[wsl]` section of the global config.
+On WSL2, mdpaste uses PowerShell to access the Windows clipboard. If PowerShell is not in PATH (e.g., `appendWindowsPath = false` in `/etc/wsl.conf`), specify its absolute path in the `[wsl]` section of the global config.
 
 PowerShell resolution order:
 1. `powershell_path` from `[wsl]` config

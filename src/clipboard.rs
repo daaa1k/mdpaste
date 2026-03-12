@@ -262,20 +262,10 @@ fn get_images_wsl(wsl_config: Option<&WslConfig>) -> Result<Vec<ClipboardImage>>
         }
     }
 
-    // Fallback: win32yank.exe (verify PNG magic bytes).
-    let win32yank = wsl_config
-        .and_then(|c| c.win32yank_path.as_deref())
-        .unwrap_or("win32yank.exe");
-    if let Ok(out) = Command::new(win32yank).arg("-o").output() {
-        if out.status.success() && out.stdout.starts_with(b"\x89PNG") {
-            return Ok(vec![clipboard_webp(&out.stdout)?]);
-        }
-    }
-
     bail!(
         "No image found in Windows clipboard \
-         (PowerShell not found or clipboard is empty; win32yank.exe not found). \
-         Configure [wsl] powershell_path and win32yank_path in \
+         (PowerShell not found or clipboard is empty). \
+         Configure [wsl] powershell_path in \
          ~/.config/mdpaste/config.toml"
     );
 }
