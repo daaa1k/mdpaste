@@ -49,17 +49,53 @@ impl R2Backend {
     /// Upload `image` bytes to R2 and return the public URL.
     pub async fn save(&self, image: &[u8], filename: &str) -> Result<String> {
         let key = format!("{}{}", self.prefix, filename);
+        let ext = std::path::Path::new(filename)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("webp");
+        let content_type = mime_for_ext(ext);
 
         self.client
             .put_object()
             .bucket(&self.bucket)
             .key(&key)
             .body(ByteStream::from(image.to_vec()))
-            .content_type("image/webp")
+            .content_type(content_type)
             .send()
             .await
             .map_err(|e| anyhow::anyhow!("R2 upload failed: {e}"))?;
 
         Ok(format!("{}/{}", self.public_url, key))
+    }
+}
+
+/// Map a lowercase file extension to its MIME type.
+fn mime_for_ext(ext: &str) -> &'static str {
+    match ext {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        _ => "image/webp",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mime_for_ext_known_types() {
+        assert_eq!(mime_for_ext("png"), "image/png");
+        assert_eq!(mime_for_ext("jpg"), "image/jpeg");
+        assert_eq!(mime_for_ext("jpeg"), "image/jpeg");
+        assert_eq!(mime_for_ext("gif"), "image/gif");
+        assert_eq!(mime_for_ext("webp"), "image/webp");
+    }
+
+    #[test]
+    fn test_mime_for_ext_unknown_defaults_to_webp() {
+        assert_eq!(mime_for_ext("bmp"), "image/webp");
+        assert_eq!(mime_for_ext("tiff"), "image/webp");
+        assert_eq!(mime_for_ext(""), "image/webp");
     }
 }

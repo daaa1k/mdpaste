@@ -127,3 +127,139 @@ fn global_config_path() -> PathBuf {
     }
     PathBuf::from(".mdpaste-global.toml")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── effective_backend priority ────────────────────────────────────────────
+
+    #[test]
+    fn test_effective_backend_cli_wins() {
+        let cfg = Config {
+            project: ProjectConfig {
+                backend: Some("r2".to_string()),
+                ..Default::default()
+            },
+            global: GlobalConfig {
+                backend: Some("r2".to_string()),
+                ..Default::default()
+            },
+        };
+        assert_eq!(cfg.effective_backend(Some("local")), "local");
+    }
+
+    #[test]
+    fn test_effective_backend_project_over_global() {
+        let cfg = Config {
+            project: ProjectConfig {
+                backend: Some("r2".to_string()),
+                ..Default::default()
+            },
+            global: GlobalConfig {
+                backend: Some("local".to_string()),
+                ..Default::default()
+            },
+        };
+        assert_eq!(cfg.effective_backend(None), "r2");
+    }
+
+    #[test]
+    fn test_effective_backend_global_fallback() {
+        let cfg = Config {
+            project: ProjectConfig::default(),
+            global: GlobalConfig {
+                backend: Some("r2".to_string()),
+                ..Default::default()
+            },
+        };
+        assert_eq!(cfg.effective_backend(None), "r2");
+    }
+
+    #[test]
+    fn test_effective_backend_default_local() {
+        let cfg = Config {
+            project: ProjectConfig::default(),
+            global: GlobalConfig::default(),
+        };
+        assert_eq!(cfg.effective_backend(None), "local");
+    }
+
+    // ── TOML parsing ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_project_config_backend() {
+        let src = r#"backend = "r2""#;
+        let cfg: ProjectConfig = toml::from_str(src).unwrap();
+        assert_eq!(cfg.backend, Some("r2".to_string()));
+    }
+
+    #[test]
+    fn test_parse_project_config_local_section() {
+        let src = r#"
+[local]
+dir = "assets"
+"#;
+        let cfg: ProjectConfig = toml::from_str(src).unwrap();
+        assert_eq!(cfg.local.unwrap().dir, "assets");
+    }
+
+    #[test]
+    fn test_parse_project_config_r2_section() {
+        let src = r#"
+[r2]
+bucket = "my-bucket"
+public_url = "https://cdn.example.com"
+prefix = "images/"
+"#;
+        let cfg: ProjectConfig = toml::from_str(src).unwrap();
+        let r2 = cfg.r2.unwrap();
+        assert_eq!(r2.bucket, "my-bucket");
+        assert_eq!(r2.public_url, "https://cdn.example.com");
+        assert_eq!(r2.prefix, Some("images/".to_string()));
+    }
+
+    #[test]
+    fn test_parse_global_config_backend() {
+        let src = r#"backend = "local""#;
+        let cfg: GlobalConfig = toml::from_str(src).unwrap();
+        assert_eq!(cfg.backend, Some("local".to_string()));
+    }
+
+    #[test]
+    fn test_parse_global_config_r2_credentials() {
+        let src = r#"
+[r2]
+account_id = "abc123"
+access_key = "key"
+secret_key = "secret"
+"#;
+        let cfg: GlobalConfig = toml::from_str(src).unwrap();
+        let r2 = cfg.r2.unwrap();
+        assert_eq!(r2.account_id, "abc123");
+        assert_eq!(r2.access_key, "key");
+        assert_eq!(r2.secret_key, "secret");
+        assert!(r2.endpoint.is_none());
+    }
+
+    #[test]
+    fn test_parse_global_config_wsl_section() {
+        let src = r#"
+[wsl]
+powershell_path = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+"#;
+        let cfg: GlobalConfig = toml::from_str(src).unwrap();
+        let wsl = cfg.wsl.unwrap();
+        assert!(wsl.powershell_path.is_some());
+        assert!(wsl.win32yank_path.is_none());
+    }
+
+    #[test]
+    fn test_project_config_defaults_to_empty() {
+        let cfg: ProjectConfig = toml::from_str("").unwrap();
+        assert!(cfg.backend.is_none());
+        assert!(cfg.local.is_none());
+        assert!(cfg.r2.is_none());
+    }
+
+}
