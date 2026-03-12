@@ -29,7 +29,12 @@ jobs:
           name: daaa1k
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
-      # Build the package and run all flake checks (clippy, tests).
-      # cachix-action automatically pushes newly built derivations to the cache.
+      # Build the package first so that the derivation (and its
+      # dependencies) are pushed to Cachix by the post-build hook.
+      - name: nix build
+        run: nix build
+
+      # Run all flake checks (build, fmt, clippy, tests).
+      # Cached build artifacts from the previous step are reused.
       - name: nix flake check
         run: nix flake check
