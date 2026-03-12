@@ -14,8 +14,8 @@ pub fn get_clipboard_image() -> Result<Vec<u8>> {
 }
 
 fn convert_to_webp(raw: &[u8]) -> Result<Vec<u8>> {
-    let img = image::load_from_memory(raw)
-        .map_err(|e| anyhow::anyhow!("Failed to decode image: {e}"))?;
+    let img =
+        image::load_from_memory(raw).map_err(|e| anyhow::anyhow!("Failed to decode image: {e}"))?;
     let mut webp_data = Vec::new();
     img.write_to(
         &mut std::io::Cursor::new(&mut webp_data),
@@ -176,7 +176,9 @@ fn get_raw_wsl() -> Result<Vec<u8>> {
                 let wsl_out = Command::new("wslpath")
                     .args(["-u", &win_path])
                     .output()
-                    .map_err(|_| anyhow::anyhow!("wslpath not found – ensure WSL2 interop is enabled"))?;
+                    .map_err(|_| {
+                        anyhow::anyhow!("wslpath not found – ensure WSL2 interop is enabled")
+                    })?;
                 if wsl_out.status.success() {
                     let wsl_path = String::from_utf8_lossy(&wsl_out.stdout).trim().to_string();
                     return std::fs::read(&wsl_path)
@@ -193,7 +195,9 @@ fn get_raw_wsl() -> Result<Vec<u8>> {
         }
     }
 
-    bail!("No image found in Windows clipboard (powershell.exe failed and win32yank.exe not found)");
+    bail!(
+        "No image found in Windows clipboard (powershell.exe failed and win32yank.exe not found)"
+    );
 }
 
 /// Detect WSL2 by checking well-known environment variables and /proc/version.
