@@ -21,7 +21,7 @@ async fn run() -> Result<()> {
     let cli = Cli::parse();
     let config = config::Config::load()?;
 
-    let image_data = clipboard::get_clipboard_image()?;
+    let image_data = clipboard::get_clipboard_image(config.global.wsl.as_ref())?;
     let filename = naming::generate_filename();
 
     let cli_backend = cli.backend.as_ref().map(|b| match b {

@@ -37,6 +37,20 @@ pub struct NamingConfig {
 pub struct GlobalConfig {
     pub backend: Option<String>,
     pub r2: Option<R2GlobalConfig>,
+    pub wsl: Option<WslConfig>,
+}
+
+/// WSL2-specific executable paths, read from the [wsl] section of
+/// ~/.config/mdpaste/config.toml.  All fields are optional; omitting them
+/// causes the clipboard module to try well-known default locations.
+#[derive(Deserialize, Debug)]
+pub struct WslConfig {
+    /// Full path to the PowerShell executable, e.g.
+    /// "/mnt/c/Program Files/PowerShell/7/pwsh.exe"
+    pub powershell_path: Option<String>,
+    /// Full path to win32yank.exe, e.g.
+    /// "/mnt/c/Users/you/AppData/Local/Microsoft/WinGet/Links/win32yank.exe"
+    pub win32yank_path: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
