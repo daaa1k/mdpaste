@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "rust-engineer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "5a8b4c69ded4bec7009af144c8aea3de5f463765f211c780afea8d7a47fb35e6"
+    }
+  }
+}
