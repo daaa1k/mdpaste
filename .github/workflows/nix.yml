@@ -20,13 +20,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install devenv.sh
-        uses: cachix/devenv-action@v1
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v16
+
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v15
         with:
-          cachixName: daaa1k
-          cachixAuthToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          name: daaa1k
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       # Build the package and run all flake checks (clippy, tests).
-      # devenv-action automatically pushes newly built derivations to the cache.
+      # cachix-action automatically pushes newly built derivations to the cache.
       - name: nix flake check
         run: nix flake check
