@@ -261,5 +261,4 @@ powershell_path = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
         assert!(cfg.local.is_none());
         assert!(cfg.r2.is_none());
     }
-
 }
