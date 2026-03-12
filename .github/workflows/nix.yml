@@ -29,7 +29,15 @@ jobs:
           name: daaa1k
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
-      # Build the package and run all flake checks (clippy, tests).
-      # cachix-action automatically pushes newly built derivations to the cache.
+      # Run all flake checks (build, clippy, tests).
       - name: nix flake check
         run: nix flake check
+
+      # Explicitly push the built package and its full closure to Cachix.
+      # cachix-action's automatic push may not capture all paths when using
+      # DeterminateSystems nix-installer, so we push explicitly here.
+      - name: Push to Cachix
+        run: |
+          nix build .#mdpaste --no-link --print-out-paths \
+            | xargs nix-store -qR \
+            | cachix push daaa1k
