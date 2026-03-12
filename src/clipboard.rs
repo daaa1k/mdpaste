@@ -3,18 +3,35 @@ use std::process::Command;
 
 use crate::config::WslConfig;
 
-/// Return WebP image bytes for all images/files found in the system clipboard.
+/// An image obtained from the clipboard, together with its file extension.
 ///
-/// Supports two clipboard content types:
-///   - Image data (e.g. screenshots, "Copy Image" in browsers) → one entry
-///   - File drop (files copied in Finder / Explorer / file managers) → one entry per file
-///
-/// All returned byte slices are WebP regardless of the source format.
-pub fn get_clipboard_images(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
-    let raws = get_raw_images_bytes(wsl_config)?;
-    raws.iter().map(|raw| convert_to_webp(raw)).collect()
+/// - Clipboard image data (screenshot, "Copy Image") → WebP-encoded bytes, `extension = "webp"`
+/// - FileDrop (files copied in a file manager) → raw file bytes, extension from the source file
+pub struct ClipboardImage {
+    pub data: Vec<u8>,
+    /// Lowercase file extension without a leading dot, e.g. `"webp"`, `"png"`, `"gif"`.
+    pub extension: String,
 }
 
+/// Return all images/files from the system clipboard as [`ClipboardImage`] entries.
+///
+/// Clipboard image data is converted to WebP.  FileDrop files are returned as-is so that
+/// animated WebP (and other formats) are preserved.
+pub fn get_clipboard_images(wsl_config: Option<&WslConfig>) -> Result<Vec<ClipboardImage>> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = wsl_config;
+        get_images_macos()
+    }
+
+    #[cfg(target_os = "linux")]
+    return get_images_linux(wsl_config);
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    bail!("Unsupported platform: only macOS and Linux are supported");
+}
+
+/// Convert raw image bytes (any format supported by the `image` crate) to WebP.
 fn convert_to_webp(raw: &[u8]) -> Result<Vec<u8>> {
     let img =
         image::load_from_memory(raw).map_err(|e| anyhow::anyhow!("Failed to decode image: {e}"))?;
@@ -27,28 +44,35 @@ fn convert_to_webp(raw: &[u8]) -> Result<Vec<u8>> {
     Ok(webp_data)
 }
 
-fn get_raw_images_bytes(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = wsl_config;
-        return get_raw_macos();
-    }
+/// Wrap clipboard image data as a WebP [`ClipboardImage`].
+fn clipboard_webp(raw: &[u8]) -> Result<ClipboardImage> {
+    let data = convert_to_webp(raw)?;
+    Ok(ClipboardImage {
+        data,
+        extension: "webp".to_string(),
+    })
+}
 
-    #[cfg(target_os = "linux")]
-    return get_raw_linux(wsl_config);
-
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    bail!("Unsupported platform: only macOS and Linux are supported");
+/// Read a file and return it as a [`ClipboardImage`], preserving the original extension.
+fn file_image(path: &str) -> Result<ClipboardImage> {
+    let data =
+        std::fs::read(path).map_err(|e| anyhow::anyhow!("Failed to read file '{path}': {e}"))?;
+    let extension = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("webp")
+        .to_lowercase();
+    Ok(ClipboardImage { data, extension })
 }
 
 // ── macOS ────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
-fn get_raw_macos() -> Result<Vec<Vec<u8>>> {
+fn get_images_macos() -> Result<Vec<ClipboardImage>> {
     // pngpaste reads image data from clipboard and outputs PNG bytes to stdout.
     if let Ok(out) = Command::new("pngpaste").arg("-").output() {
         if out.status.success() && !out.stdout.is_empty() {
-            return Ok(vec![out.stdout]);
+            return Ok(vec![clipboard_webp(&out.stdout)?]);
         }
     }
 
@@ -61,7 +85,7 @@ fn get_raw_macos() -> Result<Vec<Vec<u8>>> {
             "-e",
             "try",
             "-e",
-            &format!("set fileList to (the clipboard as {{\u{ab}class furl\u{bb}}})"),
+            "set fileList to (the clipboard as {\u{ab}class furl\u{bb}})",
             "-e",
             "repeat with f in fileList",
             "-e",
@@ -86,14 +110,7 @@ fn get_raw_macos() -> Result<Vec<Vec<u8>>> {
             .filter(|l| !l.is_empty())
             .collect();
         if !paths.is_empty() {
-            let images: Result<Vec<Vec<u8>>> = paths
-                .iter()
-                .map(|path| {
-                    std::fs::read(path)
-                        .map_err(|e| anyhow::anyhow!("Failed to read file '{path}': {e}"))
-                })
-                .collect();
-            return images;
+            return paths.iter().map(|p| file_image(p)).collect();
         }
     }
 
@@ -103,9 +120,9 @@ fn get_raw_macos() -> Result<Vec<Vec<u8>>> {
 // ── Linux / WSL2 ─────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "linux")]
-fn get_raw_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
+fn get_images_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<ClipboardImage>> {
     if is_wsl() {
-        return get_raw_wsl(wsl_config);
+        return get_images_wsl(wsl_config);
     }
 
     // Try image data via Wayland (multiple MIME types in order of preference).
@@ -115,7 +132,7 @@ fn get_raw_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
             .output()
         {
             if out.status.success() && !out.stdout.is_empty() {
-                return Ok(vec![out.stdout]);
+                return Ok(vec![clipboard_webp(&out.stdout)?]);
             }
         }
     }
@@ -127,7 +144,7 @@ fn get_raw_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
             .output()
         {
             if out.status.success() && !out.stdout.is_empty() {
-                return Ok(vec![out.stdout]);
+                return Ok(vec![clipboard_webp(&out.stdout)?]);
             }
         }
     }
@@ -141,7 +158,7 @@ fn get_raw_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
             let uris = String::from_utf8_lossy(&out.stdout);
             let paths = parse_all_file_uris(&uris);
             if !paths.is_empty() {
-                return read_all_files(&paths);
+                return paths.iter().map(|p| file_image(p)).collect();
             }
         }
     }
@@ -155,7 +172,7 @@ fn get_raw_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
             let uris = String::from_utf8_lossy(&out.stdout);
             let paths = parse_all_file_uris(&uris);
             if !paths.is_empty() {
-                return read_all_files(&paths);
+                return paths.iter().map(|p| file_image(p)).collect();
             }
         }
     }
@@ -164,7 +181,7 @@ fn get_raw_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
 }
 
 #[cfg(target_os = "linux")]
-fn get_raw_wsl(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
+fn get_images_wsl(wsl_config: Option<&WslConfig>) -> Result<Vec<ClipboardImage>> {
     let ps = resolve_powershell(wsl_config);
 
     if let Some(ref ps) = ps {
@@ -189,7 +206,7 @@ fn get_raw_wsl(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
             .output()
         {
             if out.status.success() && !out.stdout.is_empty() {
-                return Ok(vec![out.stdout]);
+                return Ok(vec![clipboard_webp(&out.stdout)?]);
             }
         }
 
@@ -234,10 +251,7 @@ fn get_raw_wsl(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
                         if wsl_out.status.success() {
                             let wsl_path =
                                 String::from_utf8_lossy(&wsl_out.stdout).trim().to_string();
-                            let data = std::fs::read(&wsl_path).map_err(|e| {
-                                anyhow::anyhow!("Failed to read file '{wsl_path}': {e}")
-                            })?;
-                            images.push(data);
+                            images.push(file_image(&wsl_path)?);
                         }
                     }
                     if !images.is_empty() {
@@ -254,7 +268,7 @@ fn get_raw_wsl(wsl_config: Option<&WslConfig>) -> Result<Vec<Vec<u8>>> {
         .unwrap_or("win32yank.exe");
     if let Ok(out) = Command::new(win32yank).arg("-o").output() {
         if out.status.success() && out.stdout.starts_with(b"\x89PNG") {
-            return Ok(vec![out.stdout]);
+            return Ok(vec![clipboard_webp(&out.stdout)?]);
         }
     }
 
@@ -346,17 +360,6 @@ fn parse_all_file_uris(uris: &str) -> Vec<String> {
     paths
 }
 
-/// Read all files and return their bytes, failing fast on the first error.
-#[cfg(target_os = "linux")]
-fn read_all_files(paths: &[String]) -> Result<Vec<Vec<u8>>> {
-    paths
-        .iter()
-        .map(|path| {
-            std::fs::read(path).map_err(|e| anyhow::anyhow!("Failed to read file '{path}': {e}"))
-        })
-        .collect()
-}
-
 /// Percent-decode a URI path component.
 #[cfg(target_os = "linux")]
 fn url_decode(s: &str) -> String {
@@ -377,4 +380,126 @@ fn url_decode(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&result).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_convert_to_webp_from_png() {
+        use image::{ImageBuffer, Rgba};
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
+            ImageBuffer::from_pixel(1, 1, Rgba([255u8, 0, 0, 255]));
+        let mut png_data = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut png_data),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+
+        let webp = convert_to_webp(&png_data).unwrap();
+        // WebP files start with RIFF and have WEBP at offset 8
+        assert!(webp.starts_with(b"RIFF"));
+        assert_eq!(&webp[8..12], b"WEBP");
+    }
+
+    #[test]
+    fn test_convert_to_webp_invalid_input() {
+        let result = convert_to_webp(b"not an image");
+        assert!(result.is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_all_file_uris_basic() {
+        let uris = "file:///home/user/image.png\nfile:///home/user/photo.jpg\n";
+        let paths = parse_all_file_uris(uris);
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0], "/home/user/image.png");
+        assert_eq!(paths[1], "/home/user/photo.jpg");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_all_file_uris_comments_and_empty() {
+        let uris = "# comment\nfile:///tmp/test.webp\n\n# another comment\n";
+        let paths = parse_all_file_uris(uris);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], "/tmp/test.webp");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_all_file_uris_with_authority() {
+        let uris = "file://localhost/home/user/test.png\n";
+        let paths = parse_all_file_uris(uris);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], "/home/user/test.png");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_all_file_uris_empty() {
+        assert!(parse_all_file_uris("").is_empty());
+        assert!(parse_all_file_uris("# only comments\n").is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_url_decode_plain() {
+        assert_eq!(url_decode("/home/user/file.png"), "/home/user/file.png");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_url_decode_space() {
+        assert_eq!(
+            url_decode("/home/user/my%20file.png"),
+            "/home/user/my file.png"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_url_decode_unicode() {
+        // %E6%97%A5 is the UTF-8 encoding of '日'
+        let decoded = url_decode("/tmp/%E6%97%A5.png");
+        assert_eq!(decoded, "/tmp/日.png");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_url_decode_incomplete_percent() {
+        // Trailing % without two hex digits should be kept as-is
+        let decoded = url_decode("/tmp/file%");
+        assert_eq!(decoded, "/tmp/file%");
+    }
+
+    #[test]
+    fn test_file_image_extension() {
+        let path = std::env::temp_dir().join("mdpaste_test_ext.gif");
+        std::fs::write(&path, b"GIF89a").unwrap();
+        let img = file_image(path.to_str().unwrap()).unwrap();
+        assert_eq!(img.extension, "gif");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_file_image_uppercase_extension() {
+        let path = std::env::temp_dir().join("mdpaste_test_ext.WEBP");
+        std::fs::write(&path, b"RIFF....WEBP").unwrap();
+        let img = file_image(path.to_str().unwrap()).unwrap();
+        assert_eq!(img.extension, "webp");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_file_image_no_extension_defaults_to_webp() {
+        let path = std::env::temp_dir().join("mdpaste_test_noext");
+        std::fs::write(&path, b"data").unwrap();
+        let img = file_image(path.to_str().unwrap()).unwrap();
+        assert_eq!(img.extension, "webp");
+        let _ = std::fs::remove_file(&path);
+    }
 }
