@@ -121,6 +121,11 @@
           # Build the package itself.
           inherit mdpaste;
 
+          # Check formatting with rustfmt.
+          mdpaste-fmt = craneLib.cargoFmt {
+            src = craneLib.cleanCargoSource ./.;
+          };
+
           # Run clippy with --deny warnings.
           mdpaste-clippy = craneLib.cargoClippy (commonArgs // {
             inherit cargoArtifacts;
