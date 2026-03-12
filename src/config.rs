@@ -1,0 +1,115 @@
+use anyhow::{Context, Result};
+use serde::Deserialize;
+use std::path::PathBuf;
+
+// ── Project config (.mdpaste.toml) ──────────────────────────────────────────
+
+#[derive(Deserialize, Default, Debug)]
+pub struct ProjectConfig {
+    pub backend: Option<String>,
+    pub local: Option<LocalConfig>,
+    pub r2: Option<R2ProjectConfig>,
+    #[allow(dead_code)]
+    pub naming: Option<NamingConfig>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct LocalConfig {
+    pub dir: String,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct R2ProjectConfig {
+    pub bucket: String,
+    pub public_url: String,
+    pub prefix: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct NamingConfig {
+    #[allow(dead_code)]
+    pub format: Option<String>,
+}
+
+// ── Global config (~/.config/mdpaste/config.toml) ───────────────────────────
+
+#[derive(Deserialize, Default, Debug)]
+pub struct GlobalConfig {
+    pub backend: Option<String>,
+    pub r2: Option<R2GlobalConfig>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct R2GlobalConfig {
+    pub account_id: String,
+    pub access_key: String,
+    pub secret_key: String,
+    /// Override the endpoint URL (defaults to https://<account_id>.r2.cloudflarestorage.com)
+    pub endpoint: Option<String>,
+}
+
+// ── Unified config ───────────────────────────────────────────────────────────
+
+pub struct Config {
+    pub project: ProjectConfig,
+    pub global: GlobalConfig,
+}
+
+impl Config {
+    pub fn load() -> Result<Self> {
+        Ok(Config {
+            project: load_project_config()?,
+            global: load_global_config()?,
+        })
+    }
+
+    /// Resolve effective backend: CLI flag > project config > global config > "local"
+    pub fn effective_backend(&self, cli_override: Option<&str>) -> String {
+        cli_override
+            .or(self.project.backend.as_deref())
+            .or(self.global.backend.as_deref())
+            .unwrap_or("local")
+            .to_string()
+    }
+}
+
+fn load_project_config() -> Result<ProjectConfig> {
+    let mut dir = std::env::current_dir()?;
+    loop {
+        let candidate = dir.join(".mdpaste.toml");
+        if candidate.exists() {
+            let src = std::fs::read_to_string(&candidate)
+                .with_context(|| format!("reading {}", candidate.display()))?;
+            return toml::from_str(&src)
+                .with_context(|| format!("parsing {}", candidate.display()));
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    Ok(ProjectConfig::default())
+}
+
+fn load_global_config() -> Result<GlobalConfig> {
+    let path = global_config_path();
+    if path.exists() {
+        let src = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        return toml::from_str(&src).with_context(|| format!("parsing {}", path.display()));
+    }
+    Ok(GlobalConfig::default())
+}
+
+fn global_config_path() -> PathBuf {
+    // Respect XDG_CONFIG_HOME; fall back to ~/.config
+    if let Ok(base) = std::env::var("XDG_CONFIG_HOME") {
+        return PathBuf::from(base).join("mdpaste").join("config.toml");
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home)
+            .join(".config")
+            .join("mdpaste")
+            .join("config.toml");
+    }
+    PathBuf::from(".mdpaste-global.toml")
+}
