@@ -21,7 +21,7 @@ pub fn get_clipboard_images(wsl_config: Option<&WslConfig>) -> Result<Vec<Clipbo
     #[cfg(target_os = "macos")]
     {
         let _ = wsl_config;
-        return get_images_macos();
+        get_images_macos()
     }
 
     #[cfg(target_os = "linux")]
@@ -45,8 +45,8 @@ fn convert_to_webp(raw: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Wrap clipboard image data as a WebP [`ClipboardImage`].
-fn clipboard_webp(raw: Vec<u8>) -> Result<ClipboardImage> {
-    let data = convert_to_webp(&raw)?;
+fn clipboard_webp(raw: &[u8]) -> Result<ClipboardImage> {
+    let data = convert_to_webp(raw)?;
     Ok(ClipboardImage {
         data,
         extension: "webp".to_string(),
@@ -72,7 +72,7 @@ fn get_images_macos() -> Result<Vec<ClipboardImage>> {
     // pngpaste reads image data from clipboard and outputs PNG bytes to stdout.
     if let Ok(out) = Command::new("pngpaste").arg("-").output() {
         if out.status.success() && !out.stdout.is_empty() {
-            return Ok(vec![clipboard_webp(out.stdout)?]);
+            return Ok(vec![clipboard_webp(&out.stdout)?]);
         }
     }
 
@@ -85,7 +85,7 @@ fn get_images_macos() -> Result<Vec<ClipboardImage>> {
             "-e",
             "try",
             "-e",
-            &format!("set fileList to (the clipboard as {{\u{ab}class furl\u{bb}}})"),
+            "set fileList to (the clipboard as {\u{ab}class furl\u{bb}})",
             "-e",
             "repeat with f in fileList",
             "-e",
@@ -132,7 +132,7 @@ fn get_images_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<ClipboardImage
             .output()
         {
             if out.status.success() && !out.stdout.is_empty() {
-                return Ok(vec![clipboard_webp(out.stdout)?]);
+                return Ok(vec![clipboard_webp(&out.stdout)?]);
             }
         }
     }
@@ -144,7 +144,7 @@ fn get_images_linux(wsl_config: Option<&WslConfig>) -> Result<Vec<ClipboardImage
             .output()
         {
             if out.status.success() && !out.stdout.is_empty() {
-                return Ok(vec![clipboard_webp(out.stdout)?]);
+                return Ok(vec![clipboard_webp(&out.stdout)?]);
             }
         }
     }
@@ -206,7 +206,7 @@ fn get_images_wsl(wsl_config: Option<&WslConfig>) -> Result<Vec<ClipboardImage>>
             .output()
         {
             if out.status.success() && !out.stdout.is_empty() {
-                return Ok(vec![clipboard_webp(out.stdout)?]);
+                return Ok(vec![clipboard_webp(&out.stdout)?]);
             }
         }
 
@@ -268,7 +268,7 @@ fn get_images_wsl(wsl_config: Option<&WslConfig>) -> Result<Vec<ClipboardImage>>
         .unwrap_or("win32yank.exe");
     if let Ok(out) = Command::new(win32yank).arg("-o").output() {
         if out.status.success() && out.stdout.starts_with(b"\x89PNG") {
-            return Ok(vec![clipboard_webp(out.stdout)?]);
+            return Ok(vec![clipboard_webp(&out.stdout)?]);
         }
     }
 

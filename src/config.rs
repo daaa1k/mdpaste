@@ -47,9 +47,11 @@ pub struct GlobalConfig {
 pub struct WslConfig {
     /// Full path to the PowerShell executable, e.g.
     /// "/mnt/c/Program Files/PowerShell/7/pwsh.exe"
+    #[cfg(target_os = "linux")]
     pub powershell_path: Option<String>,
     /// Full path to win32yank.exe, e.g.
     /// "/mnt/c/Users/you/AppData/Local/Microsoft/WinGet/Links/win32yank.exe"
+    #[cfg(target_os = "linux")]
     pub win32yank_path: Option<String>,
 }
 
@@ -242,6 +244,7 @@ secret_key = "secret"
         assert!(r2.endpoint.is_none());
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_parse_global_config_wsl_section() {
         let src = r#"

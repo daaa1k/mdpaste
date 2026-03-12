@@ -2,14 +2,14 @@ use chrono::Local;
 
 /// Generate a timestamp-based filename, e.g. `20260312_120233.webp`.
 pub fn generate_filename(ext: &str) -> String {
-    format!("{}.{}", Local::now().format("%Y%m%d_%H%M%S"), ext)
+    format!("{}.{ext}", Local::now().format("%Y%m%d_%H%M%S"))
 }
 
 /// Generate a timestamp-based filename with a sequence number suffix,
 /// e.g. `20260312_120233_2.webp`.  Used when uploading multiple files to
 /// avoid name collisions within the same second.
 pub fn generate_filename_n(n: usize, ext: &str) -> String {
-    format!("{}_{n}.{}", Local::now().format("%Y%m%d_%H%M%S"), ext)
+    format!("{}_{n}.{ext}", Local::now().format("%Y%m%d_%H%M%S"))
 }
 
 #[cfg(test)]
