@@ -9,9 +9,13 @@ permissions:
   contents: read
 
 jobs:
-  flake-check-linux:
-    name: nix flake check (ubuntu-latest)
-    runs-on: ubuntu-latest
+  flake-check:
+    name: nix flake check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -35,30 +39,5 @@ jobs:
 
       # Run all checks (fmt, clippy, tests).
       # Reuses cargoArtifacts cached by the build above.
-      - name: nix flake check
-        run: nix flake check
-
-  flake-check-macos:
-    name: nix flake check (macos-latest)
-    runs-on: macos-latest
-    # Only run on pushes to main, not on every PR, to keep PR checks fast
-    if: github.event_name == 'push'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v16
-
-      - name: Configure Cachix
-        uses: cachix/cachix-action@v15
-        with:
-          name: daaa1k
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          pushFilter: ".*"
-
-      - name: nix build
-        run: nix build
-
       - name: nix flake check
         run: nix flake check
