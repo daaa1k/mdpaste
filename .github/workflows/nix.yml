@@ -23,12 +23,23 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v16
 
-      # GitHub Actions cache as Nix substituter.
+      # Cache the Nix store via GitHub Actions cache (free).
+      # Replaces magic-nix-cache which relied on a reverse-engineered GitHub
+      # cache API and was unstable. cache-nix-action uses the official
+      # actions/cache API and is the recommended free alternative.
       # Caches large compiled artifacts (cargoArtifacts, final binary) that
       # Cachix free-plan storage limits prevent from being stored.
-      # PRs automatically restore from the base branch cache.
-      - name: Set up magic-nix-cache
-        uses: DeterminateSystems/magic-nix-cache-action@v9
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/flake.lock', '**/Cargo.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 2G
+          gc-max-store-size-macos: 2G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-last-accessed: P3DT0H
+          purge-primary-key: never
 
       - name: Configure Cachix
         uses: cachix/cachix-action@v15
@@ -36,7 +47,7 @@ jobs:
           name: daaa1k
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           # Push small store paths (cargo vendor sources, crane hooks) to
-          # Cachix; large compiled artifacts are handled by magic-nix-cache.
+          # Cachix; large compiled artifacts are handled by cache-nix-action.
           pushFilter: ".*"
 
       # Build the package so cargoArtifacts and the final binary
