@@ -69,52 +69,156 @@ fn file_image(path: &str) -> Result<ClipboardImage> {
 
 #[cfg(target_os = "macos")]
 fn get_images_macos() -> Result<Vec<ClipboardImage>> {
-    // pngpaste reads image data from clipboard and outputs PNG bytes to stdout.
+    // 1. FileDrop: check for file paths first so we use the original file,
+    //    not the icon image that macOS also places on the clipboard when copying
+    //    a file in Finder.
+    //
+    //    Finder places each copied file as a separate NSPasteboard item, so the
+    //    classic `clipboard as {«class furl»}` coercion only yields the first file.
+    //    We iterate over all pasteboard items via ASObjC instead.
+    if let Some(paths) = get_filedrop_paths_macos() {
+        if !paths.is_empty() {
+            return paths.iter().map(|p| file_image(p)).collect();
+        }
+    }
+
+    // 2. pngpaste reads image data from clipboard and outputs PNG bytes to stdout.
     if let Ok(out) = Command::new("pngpaste").arg("-").output() {
         if out.status.success() && !out.stdout.is_empty() {
             return Ok(vec![clipboard_webp(&out.stdout)?]);
         }
     }
 
-    // FileDrop: read all file paths from the clipboard via AppleScript.
-    // `{«class furl»}` coercion returns a list even when a single file is copied.
-    let out = Command::new("osascript")
-        .args([
-            "-e",
-            "set output to \"\"",
-            "-e",
-            "try",
-            "-e",
-            "set fileList to (the clipboard as {\u{ab}class furl\u{bb}})",
-            "-e",
-            "repeat with f in fileList",
-            "-e",
-            "set output to output & POSIX path of f & linefeed",
-            "-e",
-            "end repeat",
-            "-e",
-            "on error",
-            "-e",
-            "end try",
-            "-e",
-            "output",
-        ])
-        .output()
-        .map_err(|_| anyhow::anyhow!("osascript not found"))?;
-
-    if out.status.success() {
-        let text = String::from_utf8_lossy(&out.stdout);
-        let paths: Vec<&str> = text
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .collect();
-        if !paths.is_empty() {
-            return paths.iter().map(|p| file_image(p)).collect();
-        }
+    // 3. AppleScript PNG/TIFF fallback — works without pngpaste.
+    if let Some(image) = get_clipboard_image_applescript() {
+        return Ok(vec![image]);
     }
 
     bail!("No image found in clipboard");
+}
+
+/// Return file paths from a Finder FileDrop via AppleScript, or `None` on failure.
+///
+/// `clipboard as {«class furl»}` returns a list for multiple files but a single
+/// file reference on macOS 15+ when only one file is copied.  The inner
+/// try/on error handles both cases:
+/// - List → iterated normally by `repeat with f in fileList`
+/// - Single file reference → caught by inner error handler, converted directly
+#[cfg(target_os = "macos")]
+fn get_filedrop_paths_macos() -> Option<Vec<String>> {
+    use std::io::Write as _;
+
+    // Iterate over every pasteboard item and extract `public.file-url`.
+    // Finder places each copied file as a separate pasteboard item, so
+    // `clipboard as {«class furl»}` only yields the first one.
+    // Using NSPasteboard directly via ASObjC handles all items reliably.
+    let script = concat!(
+        "use framework \"AppKit\"\n",
+        "use scripting additions\n",
+        "set pb to current application's NSPasteboard's generalPasteboard()\n",
+        "set allItems to pb's pasteboardItems()\n",
+        "set output to \"\"\n",
+        "repeat with anItem in (allItems as list)\n",
+        "    try\n",
+        "        set urlStr to anItem's stringForType:\"public.file-url\"\n",
+        "        if urlStr is not missing value then\n",
+        "            set u to current application's NSURL's URLWithString:urlStr\n",
+        "            set output to output & (u's |path|() as text) & linefeed\n",
+        "        end if\n",
+        "    end try\n",
+        "end repeat\n",
+        "output\n",
+    );
+
+    let mut child = Command::new("osascript")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let mut stdin = child.stdin.take()?;
+    stdin.write_all(script.as_bytes()).ok()?;
+    drop(stdin);
+
+    let out = child.wait_with_output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&out.stdout);
+    let paths: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    Some(paths)
+}
+
+/// Retrieve clipboard image data via AppleScript, without requiring external tools.
+///
+/// Tries PNG (`«class PNGf»`) first, then TIFF (`«class TIFF»`).
+/// The raw bytes are written to a temporary file, read back, and converted to WebP.
+/// Returns `None` when the clipboard contains no image data.
+#[cfg(target_os = "macos")]
+fn get_clipboard_image_applescript() -> Option<ClipboardImage> {
+    use std::io::Write as _;
+
+    // The AppleScript writes clipboard image bytes to a temp file and returns its path,
+    // or "" if the clipboard holds no image data.
+    let script = concat!(
+        "set t to do shell script \"mktemp /tmp/mdpaste_XXXXXX.dat\"\n",
+        "try\n",
+        "    set d to clipboard as \u{ab}class PNGf\u{bb}\n",
+        "    set f to open for access POSIX file t with write permission\n",
+        "    write d to f\n",
+        "    close access f\n",
+        "    return t\n",
+        "on error\n",
+        "end try\n",
+        "try\n",
+        "    set d to clipboard as \u{ab}class TIFF\u{bb}\n",
+        "    set f to open for access POSIX file t with write permission\n",
+        "    write d to f\n",
+        "    close access f\n",
+        "    return t\n",
+        "on error\n",
+        "end try\n",
+        "do shell script \"rm -f \" & quoted form of t\n",
+        "\"\"\n",
+    );
+
+    let mut child = Command::new("osascript")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+
+    // Write script and close stdin so osascript knows input is complete.
+    let mut stdin = child.stdin.take()?;
+    stdin.write_all(script.as_bytes()).ok()?;
+    drop(stdin);
+
+    let out = child.wait_with_output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if path.is_empty() {
+        return None;
+    }
+
+    let data = std::fs::read(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+
+    if data.is_empty() {
+        return None;
+    }
+
+    clipboard_webp(&data).ok()
 }
 
 // ── Linux / WSL2 ─────────────────────────────────────────────────────────────

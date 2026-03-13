@@ -3,8 +3,11 @@
 ## Build
 
 ```sh
-cargo build
+nix develop --command cargo build
 ```
+
+> **macOS 26+**: The system Rust toolchain fails to build `aws-lc-sys`.
+> Always use `nix develop`. See `.claude/rules/build-env.md` for details.
 
 ## Code Quality Checks (Required)
 
@@ -13,13 +16,13 @@ After any code change, run the following and confirm there are no errors.
 ### Format
 
 ```sh
-cargo fmt
+nix develop --command cargo fmt
 ```
 
 ### Clippy (treat warnings as errors)
 
 ```sh
-cargo clippy -- -D warnings
+nix develop --command cargo clippy -- -D warnings
 ```
 
 - `dead_code` warning: functions only called from within a `#[cfg(...)]` block must have the same `#[cfg(...)]` attribute
