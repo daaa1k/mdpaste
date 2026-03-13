@@ -16,4 +16,5 @@ pub struct Cli {
 pub enum BackendChoice {
     Local,
     R2,
+    Nodebb,
 }
