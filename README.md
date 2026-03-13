@@ -14,6 +14,32 @@ A CLI tool that reads an image from the clipboard, saves it as a WebP file, and 
 
 ## Installation
 
+### Nix / Home Manager (recommended)
+
+Add to your Home Manager configuration:
+
+```nix
+inputs.mdpaste.url = "github:daaa1k/mdpaste";
+
+# in your Home Manager module:
+imports = [ inputs.mdpaste.homeManagerModules.default ];
+
+programs.mdpaste = {
+  enable = true;
+  # Optional: use the pre-built binary from GitHub Releases (no Rust compilation)
+  # package = inputs.mdpaste.packages.${pkgs.system}.mdpaste-bin;
+  settings = {
+    backend = "r2";
+    r2.account_id = "your-account-id";
+    # R2 credentials via R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY env vars
+  };
+};
+```
+
+`programs.mdpaste.settings` is written to `$XDG_CONFIG_HOME/mdpaste/config.toml` automatically.
+
+### Cargo
+
 ```sh
 cargo install --path .
 ```
@@ -67,7 +93,7 @@ endpoint   = "https://..."   # optional, defaults to https://<account_id>.r2.clo
 powershell_path = "/mnt/c/Program Files/PowerShell/7/pwsh.exe"
 ```
 
-### R2 credentials (environment variables)
+### R2 credentials
 
 R2 access credentials are read from environment variables:
 

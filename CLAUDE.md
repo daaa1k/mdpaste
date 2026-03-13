@@ -35,3 +35,20 @@ When editing any Rust-related file (`.rs`, `Cargo.toml`, `Cargo.lock`), use the 
 ### Test Coverage
 
 When editing any Rust-related file (`.rs`), add or update tests so that the overall test coverage remains at **80% or above**.
+
+## Nix Flake Maintenance
+
+### Releasing a new version
+
+Use the release script (see `.claude/rules/release.md` for full details):
+
+```sh
+scripts/release.sh <version>   # e.g. scripts/release.sh 0.5.0
+```
+
+### Verifying the flake
+
+```sh
+nix flake check --no-build   # evaluate all outputs
+nix build .#mdpaste-bin      # verify pre-built binary package
+```
