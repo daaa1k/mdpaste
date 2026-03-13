@@ -1,25 +1,76 @@
 #!/usr/bin/env bash
-# scripts/release.sh — bump version, tag, push, and update Nix binary hashes
+# scripts/release.sh
+#
+# Release workflow:
+# 1. bump Cargo version
+# 2. commit + tag
+# 3. push
+# 4. wait for GitHub release workflow
+# 5. fetch binary hashes
+# 6. update flake.nix
 #
 # Usage:
-#   scripts/release.sh <version>   e.g.  scripts/release.sh 0.5.0
-#
-# Prerequisites: cargo, nix, gh (GitHub CLI), jq
+#   scripts/release.sh 0.6.0
 
-set -euo pipefail
+set -Eeuo pipefail
 
-# ── Argument ──────────────────────────────────────────────────────────────────
+########################################
+# error handling
+########################################
 
-VERSION="${1:?Usage: scripts/release.sh <version>  (e.g. 0.5.0)}"
-VERSION="${VERSION#v}"   # strip leading 'v' if present
-TAG="v${VERSION}"
+trap 'echo "error: release failed at line $LINENO" >&2' ERR
+
+########################################
+# config
+########################################
 
 REPO="daaa1k/mdpaste"
+WORKFLOW="release.yml"
+
+VERSION="${1:?Usage: scripts/release.sh <version>}"
+VERSION="${VERSION#v}"
+TAG="v${VERSION}"
+
 BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 
-# ── Pre-flight checks ─────────────────────────────────────────────────────────
+########################################
+# helpers
+########################################
+
+require_cmd() {
+  command -v "$1" >/dev/null || {
+    echo "error: missing dependency: $1" >&2
+    exit 1
+  }
+}
+
+sedi() {
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    sed -i '' "$@"
+  else
+    sed -i "$@"
+  fi
+}
+
+prefetch_binary() {
+  nix store prefetch-file --hash-type sha256 --json "$1" \
+    | jq -r '.hash'
+}
+
+########################################
+# dependency checks
+########################################
+
+for cmd in git cargo nix gh jq; do
+  require_cmd "$cmd"
+done
+
+########################################
+# git checks
+########################################
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
 if [[ "$BRANCH" != "main" ]]; then
   echo "error: must be on main (current: $BRANCH)" >&2
   exit 1
@@ -30,96 +81,145 @@ if ! git diff --quiet HEAD; then
   exit 1
 fi
 
-if git rev-parse "$TAG" &>/dev/null; then
-  echo "error: tag $TAG already exists" >&2
+if git rev-parse "$TAG" >/dev/null 2>&1; then
+  echo "error: tag already exists: $TAG" >&2
   exit 1
 fi
+
+########################################
+# release start
+########################################
 
 echo "==> Releasing ${TAG}"
 
-# ── 1. Bump version in Cargo.toml ─────────────────────────────────────────────
+########################################
+# bump Cargo.toml
+########################################
 
-sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
-echo "  Cargo.toml: version = \"${VERSION}\""
+echo "==> Updating Cargo.toml version"
 
-# ── 2. Update Cargo.lock ──────────────────────────────────────────────────────
+sedi "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
 
-cargo build --quiet 2>&1 | grep -v "^$" || true
+########################################
+# update lockfile
+########################################
 
-# ── 3. Quality checks ─────────────────────────────────────────────────────────
+echo "==> Updating Cargo.lock"
 
-echo "==> Running quality checks"
+cargo build --quiet >/dev/null
+
+########################################
+# quality checks
+########################################
+
+echo "==> Running checks"
+
 cargo fmt --check
 cargo clippy -- -D warnings
 
-# ── 4. Commit, tag, push ──────────────────────────────────────────────────────
+########################################
+# commit and tag
+########################################
 
-echo "==> Committing and tagging"
+echo "==> Commit and tag"
+
 git add Cargo.toml Cargo.lock
 git commit -m "chore: bump version to ${VERSION}"
-git tag "${TAG}"
-git push origin main "${TAG}"
 
-# ── 5. Wait for release workflow to complete ──────────────────────────────────
+COMMIT_SHA=$(git rev-parse HEAD)
 
-echo "==> Waiting for release workflow to be triggered..."
-sleep 10
+git tag "$TAG"
 
-RUN_ID=$(gh run list --repo "$REPO" --workflow release.yml \
-  --limit 1 --json databaseId --jq '.[0].databaseId')
+echo "==> Push"
 
-echo "==> Watching run ${RUN_ID}..."
-while true; do
-  RUN_JSON=$(gh run view "$RUN_ID" --repo "$REPO" --json status,conclusion)
-  RUN_STATUS=$(echo "$RUN_JSON" | jq -r '.status')
-  RUN_CONCLUSION=$(echo "$RUN_JSON" | jq -r '.conclusion')
-  if [[ "$RUN_STATUS" == "completed" ]]; then
+git push origin main "$TAG"
+
+########################################
+# wait for workflow
+########################################
+
+echo "==> Waiting for GitHub Actions run"
+
+RUN_ID=""
+
+for i in {1..20}; do
+  RUN_ID=$(gh run list \
+    --repo "$REPO" \
+    --workflow "$WORKFLOW" \
+    --json databaseId,headSha \
+    --jq ".[] | select(.headSha==\"$COMMIT_SHA\") | .databaseId" \
+    | head -n1)
+
+  if [[ -n "$RUN_ID" ]]; then
     break
   fi
-  echo "  status: ${RUN_STATUS} — waiting 15s..."
-  sleep 15
+
+  sleep 5
 done
 
-if [[ "$RUN_CONCLUSION" != "success" ]]; then
-  echo "error: release workflow finished with conclusion '${RUN_CONCLUSION}'" >&2
-  echo "       Fix the issue, then run scripts/release-hashes.sh ${TAG}" >&2
+if [[ -z "$RUN_ID" ]]; then
+  echo "error: release workflow not found" >&2
   exit 1
 fi
-echo "  workflow completed successfully"
 
-# ── 6. Fetch binary hashes ────────────────────────────────────────────────────
+echo "==> Watching run $RUN_ID"
+
+gh run watch "$RUN_ID" --repo "$REPO"
+
+CONCLUSION=$(gh run view "$RUN_ID" \
+  --repo "$REPO" \
+  --json conclusion \
+  --jq '.conclusion')
+
+if [[ "$CONCLUSION" != "success" ]]; then
+  echo "error: workflow failed: $CONCLUSION" >&2
+  exit 1
+fi
+
+########################################
+# fetch hashes
+########################################
 
 echo "==> Fetching binary hashes"
-LINUX_HASH=$(nix store prefetch-file --hash-type sha256 --json \
-  "${BASE_URL}/mdpaste-linux-x86_64" | jq -r '.hash')
-MACOS_HASH=$(nix store prefetch-file --hash-type sha256 --json \
-  "${BASE_URL}/mdpaste-macos-aarch64" | jq -r '.hash')
 
-echo "  x86_64-linux:   ${LINUX_HASH}"
-echo "  aarch64-darwin: ${MACOS_HASH}"
+LINUX_HASH=$(prefetch_binary "${BASE_URL}/mdpaste-linux-x86_64")
+MACOS_HASH=$(prefetch_binary "${BASE_URL}/mdpaste-macos-aarch64")
 
-# ── 7. Update flake.nix ───────────────────────────────────────────────────────
+echo "  x86_64-linux   : $LINUX_HASH"
+echo "  aarch64-darwin : $MACOS_HASH"
 
-echo "==> Updating flake.nix binaryHashes"
-sed -i \
-  "s|\"x86_64-linux\"   = \"sha256-.*\"|\"x86_64-linux\"   = \"${LINUX_HASH}\"|" \
-  flake.nix
-sed -i \
-  "s|\"aarch64-darwin\" = \"sha256-.*\"|\"aarch64-darwin\" = \"${MACOS_HASH}\"|" \
-  flake.nix
+########################################
+# update flake
+########################################
 
-# ── 8. Verify flake evaluation ────────────────────────────────────────────────
+echo "==> Updating flake.nix"
+
+sedi "s|\"x86_64-linux\" *= *\"sha256-.*\"|\"x86_64-linux\" = \"${LINUX_HASH}\"|" flake.nix
+sedi "s|\"aarch64-darwin\" *= *\"sha256-.*\"|\"aarch64-darwin\" = \"${MACOS_HASH}\"|" flake.nix
+
+########################################
+# verify flake
+########################################
 
 echo "==> Verifying flake"
+
 nix flake check --no-build
 
-# ── 9. Commit and push ────────────────────────────────────────────────────────
+########################################
+# commit hashes
+########################################
 
-echo "==> Committing updated flake.nix"
+echo "==> Commit flake update"
+
 git add flake.nix
 git commit -m "chore(nix): update binary hashes for ${TAG}"
+
 git push origin main
 
+########################################
+# done
+########################################
+
 echo ""
-echo "Released ${TAG} successfully."
-echo "  GitHub Release: https://github.com/${REPO}/releases/tag/${TAG}"
+echo "Release completed: ${TAG}"
+echo "https://github.com/${REPO}/releases/tag/${TAG}"
