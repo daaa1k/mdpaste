@@ -3,8 +3,8 @@ name: CI
 on:
   pull_request:
 
-env:
-  CARGO_TERM_COLOR: always
+permissions:
+  contents: read
 
 jobs:
   check:
@@ -16,29 +16,20 @@ jobs:
         os: [ubuntu-latest, macos-latest]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v16
+
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v15
         with:
-          components: rustfmt, clippy
+          name: daaa1k
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          pushFilter: ".*"
 
-      - name: Cache build artifacts
-        uses: Swatinem/rust-cache@v2
+      - name: nix build
+        run: nix build
 
-      # aws-lc-sys needs cmake; ubuntu-latest ships it but pin explicitly
-      - name: Install cmake (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get install -y cmake
-
-      - name: Check formatting
-        run: cargo fmt --check
-
-      - name: Clippy
-        run: cargo clippy -- -D warnings
-
-      - name: Build
-        run: cargo build --locked
-
-      - name: Test
-        run: cargo test --locked
+      - name: nix flake check
+        run: nix flake check

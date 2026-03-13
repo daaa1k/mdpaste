@@ -28,8 +28,17 @@ jobs:
         with:
           name: daaa1k
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          # Push all store paths built during the job, including
+          # cargoArtifacts (compiled Cargo deps) for CI cache speedup.
+          pushFilter: ".*"
 
-      # Build the package and run all flake checks (clippy, tests).
-      # cachix-action automatically pushes newly built derivations to the cache.
+      # Build the package so cargoArtifacts and the final binary
+      # are in the store before flake check runs.
+      - name: nix build
+        run: nix build
+
+      # Run all checks (fmt, clippy, tests).
+      # Reuses cargoArtifacts cached by the build above.
       - name: nix flake check
         run: nix flake check
+
