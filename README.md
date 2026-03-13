@@ -132,3 +132,14 @@ PowerShell resolution order:
 | macOS    | ✅    | ✅      |
 | Linux    | ✅    | ✅      |
 | WSL2     | ✅    | ✅      |
+
+### macOS: pngpaste
+
+On macOS, `pngpaste` is recommended for reading clipboard images (screenshots, "Copy Image"):
+
+```sh
+brew install pngpaste
+```
+
+Without `pngpaste`, mdpaste falls back to AppleScript, which handles PNG and TIFF clipboard data.
+Files copied in Finder (FileDrop) work without `pngpaste`.
