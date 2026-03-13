@@ -9,6 +9,60 @@
 
   outputs = { self, nixpkgs, flake-utils, crane }:
     let
+      # Read version from Cargo.toml to keep it in sync automatically.
+      version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
+
+      # Pre-built binary hashes for each supported platform.
+      # Update these whenever a new version is released:
+      #   nix store prefetch-file --hash-type sha256 --json <url>
+      binaryHashes = {
+        "x86_64-linux"   = "sha256-Vs75r510VMoIwstDTvALkujGJmmq4CuRbd3G5FTI13c=";
+        "aarch64-darwin" = "sha256-EZNrHy7QOPQFexckUQZTwPrxqohVKReFqHGKI9CIt/w=";
+      };
+
+      # Map Nix system strings to GitHub Release artifact names.
+      binaryArtifacts = {
+        "x86_64-linux"   = "mdpaste-linux-x86_64";
+        "aarch64-darwin" = "mdpaste-macos-aarch64";
+      };
+
+      # Build a package wrapping the pre-built GitHub Release binary.
+      #
+      # On Linux (including WSL2 + NixOS), autoPatchelfHook rewrites the ELF
+      # interpreter and RPATH so the binary works under the Nix store layout.
+      mkBinaryPackage = pkgs:
+        let
+          system   = pkgs.stdenv.hostPlatform.system;
+          artifact = binaryArtifacts.${system}
+            or (throw "mdpaste-bin: no pre-built binary for ${system}");
+          hash     = binaryHashes.${system};
+          src = pkgs.fetchurl {
+            url = "https://github.com/daaa1k/mdpaste/releases/download/v${version}/${artifact}";
+            inherit hash;
+          };
+        in
+        pkgs.stdenv.mkDerivation {
+          pname = "mdpaste-bin";
+          inherit version src;
+
+          dontUnpack = true;
+
+          # autoPatchelfHook is only needed on Linux (including WSL2/NixOS).
+          nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+            pkgs.autoPatchelfHook
+          ];
+
+          # Runtime libraries required by the Linux binary (glibc + libgcc_s).
+          buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+            pkgs.glibc
+            pkgs.gcc.cc.lib
+          ];
+
+          installPhase = ''
+            install -Dm755 $src $out/bin/mdpaste
+          '';
+        };
+
       # Home Manager module — system-agnostic, exported at the top level.
       #
       # Usage in a Home Manager configuration:
@@ -19,13 +73,15 @@
       #     imports = [ inputs.mdpaste.homeManagerModules.default ];
       #     programs.mdpaste = {
       #       enable = true;
+      #       # Use the pre-built binary instead of building from source:
+      #       # package = inputs.mdpaste.packages.${pkgs.system}.mdpaste-bin;
       #       settings = {
       #         backend = "r2";
       #         r2 = {
       #           account_id = "your-account-id";
-      #           access_key = "your-access-key";
-      #           secret_key = "your-secret-key";
+      #           # endpoint = "https://your-account-id.r2.cloudflarestorage.com"; # optional
       #         };
+      #         # R2 credentials are read from R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY env vars.
       #       };
       #     };
       #   }
@@ -42,7 +98,14 @@
               type = lib.types.package;
               default = self.packages.${pkgs.system}.default;
               defaultText = lib.literalExpression "mdpaste.packages.\${pkgs.system}.default";
-              description = "The mdpaste package to install.";
+              description = ''
+                The mdpaste package to install.
+
+                Two variants are available:
+                - `mdpaste.packages.''${pkgs.system}.default` — built from source via Crane (default)
+                - `mdpaste.packages.''${pkgs.system}.mdpaste-bin` — pre-built binary from GitHub Releases
+                  (faster setup; no Rust compilation required; supports x86_64-linux and aarch64-darwin)
+              '';
             };
 
             settings = lib.mkOption {
@@ -64,13 +127,11 @@
                   backend = "r2";
                   r2 = {
                     account_id = "your-account-id";
-                    access_key = "your-access-key";
-                    secret_key = "your-secret-key";
-                    # endpoint = "https://your-account-id.r2.cloudflarestorage.com";
+                    # endpoint = "https://your-account-id.r2.cloudflarestorage.com"; # optional
+                    # R2 credentials via R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY env vars.
                   };
                   # wsl = {
                   #   powershell_path = "/mnt/c/Program Files/PowerShell/7/pwsh.exe";
-                  #   win32yank_path  = "/mnt/c/Users/you/AppData/Local/Microsoft/WinGet/Links/win32yank.exe";
                   # };
                 }
               '';
@@ -114,6 +175,9 @@
         packages = {
           default = mdpaste;
           inherit mdpaste;
+        } // pkgs.lib.optionalAttrs (binaryArtifacts ? ${system}) {
+          # mdpaste-bin is only exposed on platforms that have a pre-built binary.
+          mdpaste-bin = mkBinaryPackage pkgs;
         };
 
         # --- checks (run by `nix flake check`) --------------------------
