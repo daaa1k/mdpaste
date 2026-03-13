@@ -9,6 +9,7 @@ pub struct ProjectConfig {
     pub backend: Option<String>,
     pub local: Option<LocalConfig>,
     pub r2: Option<R2ProjectConfig>,
+    pub nodebb: Option<NodebbProjectConfig>,
     #[allow(dead_code)]
     pub naming: Option<NamingConfig>,
 }
@@ -23,6 +24,11 @@ pub struct R2ProjectConfig {
     pub bucket: String,
     pub public_url: String,
     pub prefix: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct NodebbProjectConfig {
+    pub url: String,
 }
 
 #[derive(Deserialize, Debug)]

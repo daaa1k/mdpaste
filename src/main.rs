@@ -26,9 +26,23 @@ async fn run() -> Result<()> {
     let cli_backend = cli.backend.as_ref().map(|b| match b {
         BackendChoice::Local => "local",
         BackendChoice::R2 => "r2",
+        BackendChoice::Nodebb => "nodebb",
     });
 
     match config.effective_backend(cli_backend).as_str() {
+        "nodebb" => {
+            let nodebb_project = config
+                .project
+                .nodebb
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("[nodebb] section missing in .mdpaste.toml"))?;
+            let b = backend::nodebb::NodebbBackend::new(&nodebb_project.url).await?;
+            for (i, image) in images.iter().enumerate() {
+                let filename = filename_for(i, images.len(), &image.extension);
+                let url = b.save(&image.data, &filename).await?;
+                println!("{}", markdown::generate(&url));
+            }
+        }
         "r2" => {
             let r2_project = config
                 .project
