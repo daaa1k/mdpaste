@@ -69,15 +69,23 @@ RUN_ID=$(gh run list --repo "$REPO" --workflow release.yml \
   --limit 1 --json databaseId --jq '.[0].databaseId')
 
 echo "==> Watching run ${RUN_ID}..."
-gh run watch "$RUN_ID" --repo "$REPO"
+while true; do
+  RUN_JSON=$(gh run view "$RUN_ID" --repo "$REPO" --json status,conclusion)
+  RUN_STATUS=$(echo "$RUN_JSON" | jq -r '.status')
+  RUN_CONCLUSION=$(echo "$RUN_JSON" | jq -r '.conclusion')
+  if [[ "$RUN_STATUS" == "completed" ]]; then
+    break
+  fi
+  echo "  status: ${RUN_STATUS} — waiting 15s..."
+  sleep 15
+done
 
-# Confirm the workflow succeeded before continuing
-RUN_STATUS=$(gh run view "$RUN_ID" --repo "$REPO" --json conclusion --jq '.conclusion')
-if [[ "$RUN_STATUS" != "success" ]]; then
-  echo "error: release workflow finished with status '${RUN_STATUS}'" >&2
+if [[ "$RUN_CONCLUSION" != "success" ]]; then
+  echo "error: release workflow finished with conclusion '${RUN_CONCLUSION}'" >&2
   echo "       Fix the issue, then run scripts/release-hashes.sh ${TAG}" >&2
   exit 1
 fi
+echo "  workflow completed successfully"
 
 # ── 6. Fetch binary hashes ────────────────────────────────────────────────────
 
