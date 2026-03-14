@@ -21,7 +21,7 @@ pub fn get_clipboard_images(wsl_config: Option<&WslConfig>) -> Result<Vec<Clipbo
     #[cfg(target_os = "macos")]
     {
         let _ = wsl_config;
-        return get_images_macos();
+        get_images_macos()
     }
 
     #[cfg(target_os = "linux")]
@@ -30,7 +30,7 @@ pub fn get_clipboard_images(wsl_config: Option<&WslConfig>) -> Result<Vec<Clipbo
     #[cfg(target_os = "windows")]
     {
         let _ = wsl_config;
-        return get_images_windows();
+        get_images_windows()
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
