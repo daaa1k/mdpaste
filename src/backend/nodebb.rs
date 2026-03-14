@@ -141,21 +141,18 @@ impl NodebbBackend {
         let csrf = extract_csrf(&json)?;
 
         if self.debug {
-            eprintln!("[mdpaste debug] /api/config uid={uid}");
+            eprintln!("[mdpaste debug] /api/config call completed");
         }
 
         if uid > 0 {
             if self.debug {
-                eprintln!("[mdpaste debug] session valid (uid={uid}), skipping login");
+                eprintln!("[mdpaste debug] session valid, skipping login");
             }
             return Ok(csrf);
         }
 
         if self.debug {
-            eprintln!(
-                "[mdpaste debug] not logged in, authenticating as {}",
-                self.username
-            );
+            eprintln!("[mdpaste debug] not logged in, authenticating");
         }
         // Not logged in: use the csrf we already fetched to authenticate.
         self.login(&csrf).await?;
