@@ -117,7 +117,13 @@ fn load_global_config() -> Result<GlobalConfig> {
 }
 
 fn global_config_path() -> PathBuf {
-    // Respect XDG_CONFIG_HOME; fall back to ~/.config
+    // Windows: use %APPDATA%\mdpaste\config.toml
+    #[cfg(target_os = "windows")]
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        return PathBuf::from(appdata).join("mdpaste").join("config.toml");
+    }
+
+    // Unix: respect XDG_CONFIG_HOME; fall back to ~/.config
     if let Ok(base) = std::env::var("XDG_CONFIG_HOME") {
         return PathBuf::from(base).join("mdpaste").join("config.toml");
     }
