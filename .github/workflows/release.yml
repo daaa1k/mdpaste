@@ -40,6 +40,9 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: mdpaste-macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: mdpaste-windows-x86_64.exe
 
     steps:
       - uses: actions/checkout@v4
@@ -58,10 +61,18 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release --locked --target ${{ matrix.target }}
+        env:
+          # Use aws-lc-sys pre-built NASM objects on Windows to avoid
+          # installing NASM. The pre-built objects are shipped in the crate
+          # and verified against freshly compiled code on every aws-lc-rs PR.
+          AWS_LC_SYS_PREBUILT_NASM: 1
 
       - name: Rename binary
+        shell: bash
         run: |
-          cp target/${{ matrix.target }}/release/mdpaste ${{ matrix.artifact }}
+          src="target/${{ matrix.target }}/release/mdpaste"
+          [[ "$RUNNER_OS" == "Windows" ]] && src="${src}.exe"
+          cp "$src" "${{ matrix.artifact }}"
 
       - name: Upload to release
         run: gh release upload "${{ github.ref_name }}" "${{ matrix.artifact }}" --clobber

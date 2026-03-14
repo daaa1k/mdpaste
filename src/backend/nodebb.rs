@@ -267,6 +267,13 @@ fn cookie_path_for_url(url: &str) -> PathBuf {
 }
 
 fn cache_dir() -> PathBuf {
+    // Windows: use %LOCALAPPDATA%\mdpaste
+    #[cfg(target_os = "windows")]
+    if let Ok(dir) = std::env::var("LOCALAPPDATA") {
+        return PathBuf::from(dir).join("mdpaste");
+    }
+
+    // Unix: respect XDG_CACHE_HOME; fall back to ~/.cache
     if let Ok(dir) = std::env::var("XDG_CACHE_HOME") {
         PathBuf::from(dir).join("mdpaste")
     } else if let Ok(home) = std::env::var("HOME") {
