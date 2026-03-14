@@ -177,6 +177,14 @@ if [[ "$CONCLUSION" != "success" ]]; then
 fi
 
 ########################################
+# publish to crates.io
+########################################
+
+echo "==> Publishing to crates.io"
+
+cargo publish
+
+########################################
 # fetch hashes
 ########################################
 

@@ -16,13 +16,14 @@ The script handles the following automatically:
 4. Runs `cargo fmt --check` and `cargo clippy`
 5. Commits, creates the `vX.Y.Z` tag, and pushes both
 6. Waits for the GitHub Actions release workflow to complete
-7. Fetches the SHA-256 hashes of the uploaded binaries via `nix store prefetch-file`
-8. Updates `binaryHashes` in `flake.nix`
-9. Verifies with `nix flake check --no-build`
-10. Commits and pushes the updated `flake.nix`
-11. Updates `HomebrewFormula/mdpaste.rb` with the new version and SHA-256 hashes
-12. Commits and pushes the updated formula to `main`
-13. Clones `daaa1k/homebrew-tap` and copies the formula to `Formula/mdpaste.rb`, then pushes
+7. Publishes the crate to crates.io via `cargo publish`
+8. Fetches the SHA-256 hashes of the uploaded binaries via `nix store prefetch-file`
+9. Updates `binaryHashes` in `flake.nix`
+10. Verifies with `nix flake check --no-build`
+11. Commits and pushes the updated `flake.nix`
+12. Updates `HomebrewFormula/mdpaste.rb` with the new version and SHA-256 hashes
+13. Commits and pushes the updated formula to `main`
+14. Clones `daaa1k/homebrew-tap` and copies the formula to `Formula/mdpaste.rb`, then pushes
 
 ## Prerequisites
 

@@ -52,6 +52,12 @@ programs.mdpaste = {
 ### Cargo
 
 ```sh
+cargo install mdpaste
+```
+
+Or build from source:
+
+```sh
 cargo install --path .
 ```
 
