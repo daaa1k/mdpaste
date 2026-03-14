@@ -1,11 +1,16 @@
 use anyhow::{Context, Result};
+use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde_json::Value;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub struct NodebbBackend {
     client: reqwest::Client,
+    cookie_store: Arc<CookieStoreMutex>,
     base_url: String,
     username: String,
     password: String,
+    cookie_path: Option<PathBuf>,
 }
 
 impl NodebbBackend {
@@ -14,30 +19,43 @@ impl NodebbBackend {
             std::env::var("NODEBB_USERNAME").context("NODEBB_USERNAME env var not set")?;
         let password =
             std::env::var("NODEBB_PASSWORD").context("NODEBB_PASSWORD env var not set")?;
-        Self::new_inner(url, username, password)
+        let cookie_path = Some(cookie_path_for_url(url));
+        Self::new_inner(url, username, password, cookie_path)
     }
 
-    fn new_inner(url: &str, username: String, password: String) -> Result<Self> {
-        let client = reqwest::Client::builder().cookie_store(true).build()?;
+    fn new_inner(
+        url: &str,
+        username: String,
+        password: String,
+        cookie_path: Option<PathBuf>,
+    ) -> Result<Self> {
+        let store = match &cookie_path {
+            Some(path) if path.exists() => load_cookie_store(path),
+            _ => CookieStore::default(),
+        };
+        let cookie_store = Arc::new(CookieStoreMutex::new(store));
+        let client = reqwest::Client::builder()
+            .cookie_provider(Arc::clone(&cookie_store))
+            .build()?;
         Ok(Self {
             client,
+            cookie_store,
             base_url: url.trim_end_matches('/').to_string(),
             username,
             password,
+            cookie_path,
         })
     }
 
     /// Upload `image` bytes to NodeBB and return the public URL.
     ///
     /// Login flow:
-    /// 1. GET  /api/config  → csrf_token
-    /// 2. POST /login       → session cookie
-    /// 3. GET  /api/config  → refreshed csrf_token
-    /// 4. POST /api/post/upload (multipart)
+    /// - If a cached session cookie exists and is valid (uid > 0), skip login.
+    /// - Otherwise: GET /api/config → csrf, POST /login, save cookies.
+    /// - GET /api/config → csrf for upload.
+    /// - POST /api/post/upload (multipart).
     pub async fn save(&self, image: &[u8], filename: &str) -> Result<String> {
-        let csrf1 = self.fetch_csrf().await?;
-        self.login(&csrf1).await?;
-        let csrf2 = self.fetch_csrf().await?;
+        let csrf = self.ensure_logged_in().await?;
 
         let mime = mime_for_filename(filename);
         let part = reqwest::multipart::Part::bytes(image.to_vec())
@@ -48,7 +66,7 @@ impl NodebbBackend {
         let res = self
             .client
             .post(format!("{}/api/post/upload", self.base_url))
-            .header("x-csrf-token", csrf2)
+            .header("x-csrf-token", csrf)
             .multipart(form)
             .send()
             .await?;
@@ -85,18 +103,47 @@ impl NodebbBackend {
         }
     }
 
-    async fn fetch_csrf(&self) -> Result<String> {
-        let json: Value = self
-            .client
+    /// Ensures the client has a valid session and returns a CSRF token for upload.
+    ///
+    /// Checks `/api/config` for `user.uid > 0` (logged-in indicator).  If the
+    /// cached session is still valid the same response's `csrf_token` is
+    /// returned immediately.  Otherwise the client logs in and fetches a fresh
+    /// token.
+    async fn ensure_logged_in(&self) -> Result<String> {
+        let json = self.get_config_json().await?;
+        let uid = json
+            .pointer("/user/uid")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let csrf = extract_csrf(&json)?;
+
+        if uid > 0 {
+            return Ok(csrf);
+        }
+
+        // Not logged in: use the csrf we already fetched to authenticate.
+        self.login(&csrf).await?;
+        self.save_cookies()?;
+
+        // Fetch a session-bound csrf for the upload request.
+        let json2 = self.get_config_json().await?;
+        extract_csrf(&json2)
+    }
+
+    async fn get_config_json(&self) -> Result<Value> {
+        self.client
             .get(format!("{}/api/config", self.base_url))
             .send()
             .await?
             .json()
-            .await?;
-        json["csrf_token"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("csrf_token not found in /api/config"))
-            .map(str::to_string)
+            .await
+            .context("failed to fetch /api/config")
+    }
+
+    /// Exposed for unit tests.
+    #[cfg(test)]
+    pub(crate) async fn fetch_csrf(&self) -> Result<String> {
+        extract_csrf(&self.get_config_json().await?)
     }
 
     async fn login(&self, csrf: &str) -> Result<()> {
@@ -117,13 +164,64 @@ impl NodebbBackend {
         }
         Ok(())
     }
+
+    fn save_cookies(&self) -> Result<()> {
+        let Some(path) = &self.cookie_path else {
+            return Ok(());
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create cache dir: {}", parent.display()))?;
+        }
+        let mut file = std::fs::File::create(path)
+            .with_context(|| format!("failed to create cookie file: {}", path.display()))?;
+        let store = self
+            .cookie_store
+            .lock()
+            .expect("cookie store mutex poisoned");
+        serde_json::to_writer(&mut file, &*store).context("failed to save cookies")
+    }
+}
+
+// ── Cookie persistence helpers ────────────────────────────────────────────────
+
+fn load_cookie_store(path: &Path) -> CookieStore {
+    let Ok(file) = std::fs::File::open(path) else {
+        return CookieStore::default();
+    };
+    let reader = std::io::BufReader::new(file);
+    serde_json::from_reader(reader).unwrap_or_default()
+}
+
+fn cookie_path_for_url(url: &str) -> PathBuf {
+    let key = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/')
+        .replace(['/', ':', '.'], "_");
+    cache_dir().join(format!("nodebb_{key}.json"))
+}
+
+fn cache_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("XDG_CACHE_HOME") {
+        PathBuf::from(dir).join("mdpaste")
+    } else if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".cache").join("mdpaste")
+    } else {
+        PathBuf::from(".cache").join("mdpaste")
+    }
+}
+
+// ── Misc helpers ──────────────────────────────────────────────────────────────
+
+fn extract_csrf(json: &Value) -> Result<String> {
+    json["csrf_token"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("csrf_token not found in /api/config"))
+        .map(str::to_string)
 }
 
 /// Extract the origin (`scheme://host:port`) from a URL, stripping any path.
-///
-/// ```
-/// # use mdpaste::backend::nodebb::origin_of; // illustrative — fn is private
-/// ```
 ///
 /// Examples:
 /// - `"https://example.com/forum"` → `"https://example.com"`
@@ -154,7 +252,7 @@ mod tests {
     use mockito::Server;
 
     fn make_backend(url: &str) -> NodebbBackend {
-        NodebbBackend::new_inner(url, "testuser".to_string(), "testpass".to_string()).unwrap()
+        NodebbBackend::new_inner(url, "testuser".to_string(), "testpass".to_string(), None).unwrap()
     }
 
     // ── origin_of ─────────────────────────────────────────────────────────────
@@ -209,6 +307,22 @@ mod tests {
     fn test_mime_for_filename_unknown_defaults_to_webp() {
         assert_eq!(mime_for_filename("file.bmp"), "image/webp");
         assert_eq!(mime_for_filename("file"), "image/webp");
+    }
+
+    // ── cookie_path_for_url ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_cookie_path_for_url_sanitises_https() {
+        let path = cookie_path_for_url("https://forum.example.com/forum");
+        let name = path.file_name().unwrap().to_str().unwrap();
+        assert_eq!(name, "nodebb_forum_example_com_forum.json");
+    }
+
+    #[test]
+    fn test_cookie_path_for_url_sanitises_localhost_port() {
+        let path = cookie_path_for_url("http://localhost:4567");
+        let name = path.file_name().unwrap().to_str().unwrap();
+        assert_eq!(name, "nodebb_localhost_4567.json");
     }
 
     // ── fetch_csrf ────────────────────────────────────────────────────────────
@@ -276,25 +390,32 @@ mod tests {
 
     // ── save ──────────────────────────────────────────────────────────────────
 
+    /// Helper: set up the standard "not logged in" mock sequence.
+    /// /api/config called twice (check session + post-login csrf), /login once.
+    async fn mock_login_sequence(server: &mut Server, csrf: &str) -> Vec<mockito::Mock> {
+        let m_config = server
+            .mock("GET", "/api/config")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(r#"{{"csrf_token":"{csrf}"}}"#))
+            .expect(2)
+            .create_async()
+            .await;
+        let m_login = server
+            .mock("POST", "/login")
+            .with_status(200)
+            .create_async()
+            .await;
+        vec![m_config, m_login]
+    }
+
     #[tokio::test]
     async fn test_save_with_relative_url() {
         let mut server = Server::new_async().await;
         let base = server.url();
 
-        let _m1 = server
-            .mock("GET", "/api/config")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"csrf_token":"token1"}"#)
-            .expect(2)
-            .create_async()
-            .await;
-        let _m2 = server
-            .mock("POST", "/login")
-            .with_status(200)
-            .create_async()
-            .await;
-        let _m3 = server
+        let _mocks = mock_login_sequence(&mut server, "token1").await;
+        let _m_upload = server
             .mock("POST", "/api/post/upload")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -311,20 +432,8 @@ mod tests {
     async fn test_save_with_absolute_url() {
         let mut server = Server::new_async().await;
 
-        let _m1 = server
-            .mock("GET", "/api/config")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"csrf_token":"token1"}"#)
-            .expect(2)
-            .create_async()
-            .await;
-        let _m2 = server
-            .mock("POST", "/login")
-            .with_status(200)
-            .create_async()
-            .await;
-        let _m3 = server
+        let _mocks = mock_login_sequence(&mut server, "token1").await;
+        let _m_upload = server
             .mock("POST", "/api/post/upload")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -345,7 +454,7 @@ mod tests {
         let mut server = Server::new_async().await;
         let base_with_path = format!("{}/forum", server.url());
 
-        let _m1 = server
+        let _m_config = server
             .mock("GET", "/forum/api/config")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -353,12 +462,12 @@ mod tests {
             .expect(2)
             .create_async()
             .await;
-        let _m2 = server
+        let _m_login = server
             .mock("POST", "/forum/login")
             .with_status(200)
             .create_async()
             .await;
-        let _m3 = server
+        let _m_upload = server
             .mock("POST", "/forum/api/post/upload")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -380,20 +489,8 @@ mod tests {
     async fn test_save_upload_failure_returns_error() {
         let mut server = Server::new_async().await;
 
-        let _m1 = server
-            .mock("GET", "/api/config")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"csrf_token":"token1"}"#)
-            .expect(2)
-            .create_async()
-            .await;
-        let _m2 = server
-            .mock("POST", "/login")
-            .with_status(200)
-            .create_async()
-            .await;
-        let _m3 = server
+        let _mocks = mock_login_sequence(&mut server, "token1").await;
+        let _m_upload = server
             .mock("POST", "/api/post/upload")
             .with_status(500)
             .create_async()
@@ -402,5 +499,38 @@ mod tests {
         let backend = make_backend(&server.url());
         let err = backend.save(b"fakeimage", "test.webp").await.unwrap_err();
         assert!(err.to_string().contains("NodeBB upload failed"));
+    }
+
+    /// When /api/config reports uid > 0, login must be skipped entirely.
+    #[tokio::test]
+    async fn test_save_skips_login_when_session_valid() {
+        let mut server = Server::new_async().await;
+        let base = server.url();
+
+        // /api/config returns a logged-in user → only called once
+        let _m_config = server
+            .mock("GET", "/api/config")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"csrf_token":"tok42","user":{"uid":1,"username":"alice"}}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        // /login must NOT be called
+        let m_login = server.mock("POST", "/login").expect(0).create_async().await;
+        let _m_upload = server
+            .mock("POST", "/api/post/upload")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"status":{"code":"ok"},"response":{"images":[{"url":"/assets/img.png"}]}}"#,
+            )
+            .create_async()
+            .await;
+
+        let backend = make_backend(&base);
+        let url = backend.save(b"img", "img.png").await.unwrap();
+        assert_eq!(url, format!("{base}/assets/img.png"));
+        m_login.assert_async().await;
     }
 }
