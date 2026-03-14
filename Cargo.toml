@@ -3,6 +3,8 @@ name = "mdpaste"
 version = "0.7.0"
 edition = "2021"
 description = "Paste clipboard image as Markdown link"
+license = "MIT"
+repository = "https://github.com/daaa1k/mdpaste"
 
 [[bin]]
 name = "mdpaste"
