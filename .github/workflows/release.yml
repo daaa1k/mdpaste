@@ -59,12 +59,13 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get install -y cmake
 
-      - name: Install NASM (Windows)
-        if: runner.os == 'Windows'
-        uses: ilammy/setup-nasm@v1
-
       - name: Build release binary
         run: cargo build --release --locked --target ${{ matrix.target }}
+        env:
+          # Use aws-lc-sys pre-built NASM objects on Windows to avoid
+          # installing NASM. The pre-built objects are shipped in the crate
+          # and verified against freshly compiled code on every aws-lc-rs PR.
+          AWS_LC_SYS_PREBUILT_NASM: 1
 
       - name: Rename binary
         shell: bash
