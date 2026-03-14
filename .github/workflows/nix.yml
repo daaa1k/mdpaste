@@ -24,20 +24,18 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@v16
 
       # Cache the Nix store via GitHub Actions cache (free).
-      # Replaces magic-nix-cache which relied on a reverse-engineered GitHub
-      # cache API and was unstable. cache-nix-action uses the official
-      # actions/cache API and is the recommended free alternative.
-      # Caches large compiled artifacts (cargoArtifacts, final binary) that
-      # Cachix free-plan storage limits prevent from being stored.
+      # gc-max-store-size is intentionally omitted for both platforms.
+      # With a 2G limit, GC deleted critical artifacts (rustc, cargo,
+      # cargoArtifacts, vendor sources) making warm-cache builds slower
+      # than cold builds. The full store is ~1GB (Linux) / ~700MB (macOS)
+      # compressed, well within GitHub's 10GB cache limit.
       - name: Cache Nix store
         uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/flake.lock', '**/Cargo.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 2G
-          gc-max-store-size-macos: 2G
+          primary-key: nix-v2-${{ runner.os }}-${{ hashFiles('**/flake.lock', '**/Cargo.lock') }}
+          restore-prefixes-first-match: nix-v2-${{ runner.os }}-
           purge: true
-          purge-prefixes: nix-${{ runner.os }}-
+          purge-prefixes: nix-v2-${{ runner.os }}-
           purge-last-accessed: P3DT0H
           purge-primary-key: never
 
@@ -46,8 +44,6 @@ jobs:
         with:
           name: daaa1k
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          # Push small store paths (cargo vendor sources, crane hooks) to
-          # Cachix; large compiled artifacts are handled by cache-nix-action.
           pushFilter: ".*"
 
       # Build the package so cargoArtifacts and the final binary
