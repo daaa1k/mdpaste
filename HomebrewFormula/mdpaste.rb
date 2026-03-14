@@ -2,19 +2,19 @@ class Mdpaste < Formula
   desc "Paste clipboard image as Markdown link"
   homepage "https://github.com/daaa1k/mdpaste"
   license "MIT"
-  version "0.7.0"
+  version "0.7.1"
 
   on_macos do
     on_arm do
       url "https://github.com/daaa1k/mdpaste/releases/download/v#{version}/mdpaste-macos-aarch64"
-      sha256 "4111748685729c95f8f856fa1a74fce024f713fa33bc759fd9613e89a71d6388" # macos-aarch64
+      sha256 "c55c7f7356c33ce4c421ed7214e79c7be1e49bfcb3aff00fdac94f3dfc8c2b80" # macos-aarch64
     end
   end
 
   on_linux do
     on_intel do
       url "https://github.com/daaa1k/mdpaste/releases/download/v#{version}/mdpaste-linux-x86_64"
-      sha256 "0b3e4d4dfc5576b20a7a836836a576705492371509d077bb61d4b834db7fe07d" # linux-x86_64
+      sha256 "f9b62820fc1d3ed16d2a6873b3e5207f155bcd7dd61ce3d080942ade7d05b9b4" # linux-x86_64
     end
   end
 
