@@ -1850,6 +1850,7 @@ dependencies = [
  "aws-sdk-s3",
  "chrono",
  "clap",
+ "cookie_store 0.21.1",
  "image",
  "mockito",
  "reqwest",

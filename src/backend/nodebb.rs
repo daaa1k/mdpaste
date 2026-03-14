@@ -11,16 +11,23 @@ pub struct NodebbBackend {
     username: String,
     password: String,
     cookie_path: Option<PathBuf>,
+    debug: bool,
 }
 
 impl NodebbBackend {
-    pub async fn new(url: &str) -> Result<Self> {
+    pub async fn new(url: &str, debug: bool) -> Result<Self> {
         let username =
             std::env::var("NODEBB_USERNAME").context("NODEBB_USERNAME env var not set")?;
         let password =
             std::env::var("NODEBB_PASSWORD").context("NODEBB_PASSWORD env var not set")?;
         let cookie_path = Some(cookie_path_for_url(url));
-        Self::new_inner(url, username, password, cookie_path)
+        if debug {
+            eprintln!(
+                "[mdpaste debug] cookie path: {}",
+                cookie_path.as_ref().unwrap().display()
+            );
+        }
+        Self::new_inner(url, username, password, cookie_path, debug)
     }
 
     fn new_inner(
@@ -28,9 +35,15 @@ impl NodebbBackend {
         username: String,
         password: String,
         cookie_path: Option<PathBuf>,
+        debug: bool,
     ) -> Result<Self> {
         let store = match &cookie_path {
-            Some(path) if path.exists() => load_cookie_store(path),
+            Some(path) if path.exists() => {
+                if debug {
+                    eprintln!("[mdpaste debug] cookie file found: {}", path.display());
+                }
+                load_cookie_store(path, debug)
+            }
             _ => CookieStore::default(),
         };
         let cookie_store = Arc::new(CookieStoreMutex::new(store));
@@ -44,6 +57,7 @@ impl NodebbBackend {
             username,
             password,
             cookie_path,
+            debug,
         })
     }
 
@@ -105,22 +119,44 @@ impl NodebbBackend {
 
     /// Ensures the client has a valid session and returns a CSRF token for upload.
     ///
-    /// Checks `/api/config` for `user.uid > 0` (logged-in indicator).  If the
+    /// Checks `/api/config` for `uid > 0` at the top level (logged-in indicator).  If the
     /// cached session is still valid the same response's `csrf_token` is
     /// returned immediately.  Otherwise the client logs in and fetches a fresh
     /// token.
     async fn ensure_logged_in(&self) -> Result<String> {
+        if self.debug {
+            let n = self
+                .cookie_store
+                .lock()
+                .expect("poisoned")
+                .iter_any()
+                .count();
+            eprintln!("[mdpaste debug] {n} cookie(s) in store before GET /api/config");
+        }
+
         let json = self.get_config_json().await?;
-        let uid = json
-            .pointer("/user/uid")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
+        // NodeBB returns `uid` at the top level (not nested under `user`).
+        // `loggedIn` is also available but uid > 0 is the canonical check.
+        let uid = json["uid"].as_u64().unwrap_or(0);
         let csrf = extract_csrf(&json)?;
 
+        if self.debug {
+            eprintln!("[mdpaste debug] /api/config uid={uid}");
+        }
+
         if uid > 0 {
+            if self.debug {
+                eprintln!("[mdpaste debug] session valid (uid={uid}), skipping login");
+            }
             return Ok(csrf);
         }
 
+        if self.debug {
+            eprintln!(
+                "[mdpaste debug] not logged in, authenticating as {}",
+                self.username
+            );
+        }
         // Not logged in: use the csrf we already fetched to authenticate.
         self.login(&csrf).await?;
         self.save_cookies()?;
@@ -179,18 +215,49 @@ impl NodebbBackend {
             .cookie_store
             .lock()
             .expect("cookie store mutex poisoned");
-        serde_json::to_writer(&mut file, &*store).context("failed to save cookies")
+        if self.debug {
+            eprintln!(
+                "[mdpaste debug] saving {} cookie(s) to {}",
+                store.iter_any().count(),
+                path.display()
+            );
+        }
+        // Use the library's dedicated API which persists all cookies including
+        // session cookies (no Expires/Max-Age).  The legacy CookieStore::Serialize
+        // impl only writes persistent cookies, causing an empty file for NodeBB.
+        cookie_store::serde::json::save_incl_expired_and_nonpersistent(&store, &mut file)
+            .map_err(|e| anyhow::anyhow!("failed to save cookies: {e}"))
     }
 }
 
 // ── Cookie persistence helpers ────────────────────────────────────────────────
 
-fn load_cookie_store(path: &Path) -> CookieStore {
+fn load_cookie_store(path: &Path, debug: bool) -> CookieStore {
     let Ok(file) = std::fs::File::open(path) else {
         return CookieStore::default();
     };
     let reader = std::io::BufReader::new(file);
-    serde_json::from_reader(reader).unwrap_or_default()
+    // Use cookie_store::serde::json::load which reads all non-expired cookies
+    // including session cookies, using the same format as save_incl_expired_and_nonpersistent.
+    match cookie_store::serde::json::load(reader) {
+        Ok(store) => {
+            if debug {
+                let count = store.iter_any().count();
+                eprintln!(
+                    "[mdpaste debug] loaded {} cookie(s) from {}",
+                    count,
+                    path.display()
+                );
+            }
+            store
+        }
+        Err(e) => {
+            if debug {
+                eprintln!("[mdpaste debug] failed to load cookies: {e}, starting fresh");
+            }
+            CookieStore::default()
+        }
+    }
 }
 
 fn cookie_path_for_url(url: &str) -> PathBuf {
@@ -252,7 +319,14 @@ mod tests {
     use mockito::Server;
 
     fn make_backend(url: &str) -> NodebbBackend {
-        NodebbBackend::new_inner(url, "testuser".to_string(), "testpass".to_string(), None).unwrap()
+        NodebbBackend::new_inner(
+            url,
+            "testuser".to_string(),
+            "testpass".to_string(),
+            None,
+            false,
+        )
+        .unwrap()
     }
 
     // ── origin_of ─────────────────────────────────────────────────────────────
@@ -307,6 +381,39 @@ mod tests {
     fn test_mime_for_filename_unknown_defaults_to_webp() {
         assert_eq!(mime_for_filename("file.bmp"), "image/webp");
         assert_eq!(mime_for_filename("file"), "image/webp");
+    }
+
+    // ── session cookie persistence ────────────────────────────────────────────
+
+    /// Session cookies (no Expires/Max-Age) must survive a save→load roundtrip.
+    ///
+    /// This guards against the `CookieStore::Serialize` legacy impl which filters
+    /// out session cookies via `is_persistent()`.
+    #[test]
+    fn test_session_cookie_save_load_roundtrip() {
+        let json = concat!(
+            r#"[{"raw_cookie":"sid=abc123; HttpOnly; SameSite=Lax; Path=/forum","#,
+            r#""path":["/forum",true],"domain":{"HostOnly":"example.com"},"expires":"SessionEnd"}]"#,
+            "\n",
+        );
+        // load must successfully parse a session cookie
+        let store =
+            cookie_store::serde::json::load(json.as_bytes()).expect("session cookie load failed");
+        assert_eq!(store.iter_any().count(), 1, "session cookie must be loaded");
+
+        // save_incl_expired_and_nonpersistent must round-trip it
+        let mut buf = Vec::new();
+        cookie_store::serde::json::save_incl_expired_and_nonpersistent(&store, &mut buf)
+            .expect("session cookie save failed");
+        let saved = String::from_utf8(buf).unwrap();
+
+        let store2 =
+            cookie_store::serde::json::load(saved.as_bytes()).expect("reloaded session cookie");
+        assert_eq!(
+            store2.iter_any().count(),
+            1,
+            "session cookie must survive save→load"
+        );
     }
 
     // ── cookie_path_for_url ───────────────────────────────────────────────────
@@ -512,7 +619,7 @@ mod tests {
             .mock("GET", "/api/config")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"csrf_token":"tok42","user":{"uid":1,"username":"alice"}}"#)
+            .with_body(r#"{"csrf_token":"tok42","uid":1,"loggedIn":true}"#)
             .expect(1)
             .create_async()
             .await;

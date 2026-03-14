@@ -10,6 +10,10 @@ pub struct Cli {
     /// Force a specific backend, overriding .mdpaste.toml
     #[arg(long, value_enum)]
     pub backend: Option<BackendChoice>,
+
+    /// Enable debug output to stderr (shows login/cookie status)
+    #[arg(long, default_value_t = false)]
+    pub debug: bool,
 }
 
 #[derive(Clone, ValueEnum)]

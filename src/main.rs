@@ -36,7 +36,7 @@ async fn run() -> Result<()> {
                 .nodebb
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("[nodebb] section missing in .mdpaste.toml"))?;
-            let b = backend::nodebb::NodebbBackend::new(&nodebb_project.url).await?;
+            let b = backend::nodebb::NodebbBackend::new(&nodebb_project.url, cli.debug).await?;
             for (i, image) in images.iter().enumerate() {
                 let filename = filename_for(i, images.len(), &image.extension);
                 let url = b.save(&image.data, &filename).await?;
