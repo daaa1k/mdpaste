@@ -217,6 +217,66 @@ git commit -m "chore(nix): update binary hashes for ${TAG}"
 git push origin main
 
 ########################################
+# update homebrew formula
+########################################
+
+echo "==> Updating Homebrew formula"
+
+# Convert a Nix SRI hash (sha256-BASE64) to a lowercase hex SHA-256 digest.
+sri_to_sha256() {
+  echo "${1#sha256-}" | base64 -d | od -An -tx1 | tr -d ' \n'
+}
+
+MACOS_SHA256=$(sri_to_sha256 "$MACOS_HASH")
+LINUX_SHA256=$(sri_to_sha256 "$LINUX_HASH")
+
+echo "  aarch64-darwin : $MACOS_SHA256"
+echo "  x86_64-linux   : $LINUX_SHA256"
+
+FORMULA="HomebrewFormula/mdpaste.rb"
+
+sedi "s/version \"[^\"]*\"/version \"${VERSION}\"/" "$FORMULA"
+sedi "s|sha256 \"[a-f0-9]*\" # macos-aarch64|sha256 \"${MACOS_SHA256}\" # macos-aarch64|" "$FORMULA"
+sedi "s|sha256 \"[a-f0-9]*\" # linux-x86_64|sha256 \"${LINUX_SHA256}\" # linux-x86_64|" "$FORMULA"
+
+git add "$FORMULA"
+git commit -m "chore(brew): update formula to ${TAG}"
+
+git push origin main
+
+########################################
+# push to homebrew tap repo
+########################################
+
+echo "==> Pushing to Homebrew tap"
+
+TAP_REPO="daaa1k/homebrew-tap"
+
+if gh repo view "$TAP_REPO" >/dev/null 2>&1; then
+  TAP_DIR=$(mktemp -d)
+
+  gh repo clone "$TAP_REPO" "$TAP_DIR"
+
+  mkdir -p "$TAP_DIR/Formula"
+  cp "$FORMULA" "$TAP_DIR/Formula/mdpaste.rb"
+
+  (
+    cd "$TAP_DIR"
+    git add Formula/mdpaste.rb
+    git commit -m "chore: update mdpaste to ${TAG}"
+    git push origin "$(git rev-parse --abbrev-ref HEAD)"
+  )
+
+  rm -rf "$TAP_DIR"
+
+  echo "  Tap updated: https://github.com/${TAP_REPO}"
+else
+  echo "  warning: tap repo ${TAP_REPO} not found — skipping"
+  echo "  Create it at https://github.com/new with name 'homebrew-tap'"
+  echo "  Then copy HomebrewFormula/mdpaste.rb to Formula/mdpaste.rb in the tap repo"
+fi
+
+########################################
 # done
 ########################################
 

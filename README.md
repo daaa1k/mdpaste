@@ -15,6 +15,16 @@ A CLI tool that reads an image from the clipboard, saves it as a WebP file, and 
 
 ## Installation
 
+### Homebrew (macOS / Linux)
+
+```sh
+brew tap daaa1k/tap
+brew install mdpaste
+```
+
+> Supports macOS (Apple Silicon) and Linux (x86\_64).
+> Intel Mac users can install via Cargo or Nix instead.
+
 ### Nix / Home Manager (recommended)
 
 Add to your Home Manager configuration:
