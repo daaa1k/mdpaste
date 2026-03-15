@@ -1,16 +1,13 @@
 use anyhow::{Context, Result};
-use aws_credential_types::Credentials;
-use aws_sdk_s3::{
-    config::{BehaviorVersion, Region},
-    primitives::ByteStream,
-    Client,
-};
+use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
+use std::time::Duration;
 
 use crate::config::{R2GlobalConfig, R2ProjectConfig};
 
 pub struct R2Backend {
-    client: Client,
-    bucket: String,
+    bucket: Bucket,
+    credentials: Credentials,
+    client: reqwest::Client,
     public_url: String,
     prefix: String,
 }
@@ -27,19 +24,16 @@ impl R2Backend {
         let secret_key = std::env::var("R2_SECRET_ACCESS_KEY")
             .context("R2_SECRET_ACCESS_KEY environment variable not set")?;
 
-        let creds = Credentials::new(&access_key, &secret_key, None, None, "mdpaste");
+        let endpoint_url: url::Url = endpoint.parse().context("Invalid R2 endpoint URL")?;
+        let bucket = Bucket::new(endpoint_url, UrlStyle::Path, project.bucket.clone(), "auto")
+            .context("Failed to initialise R2 bucket")?;
 
-        let conf = aws_sdk_s3::Config::builder()
-            .behavior_version(BehaviorVersion::latest())
-            .credentials_provider(creds)
-            .region(Region::new("auto"))
-            .endpoint_url(endpoint)
-            .force_path_style(true)
-            .build();
+        let credentials = Credentials::new(access_key, secret_key);
 
         Ok(R2Backend {
-            client: Client::from_conf(conf),
-            bucket: project.bucket.clone(),
+            bucket,
+            credentials,
+            client: reqwest::Client::new(),
             public_url: project.public_url.trim_end_matches('/').to_string(),
             prefix: project.prefix.clone().unwrap_or_default(),
         })
@@ -54,14 +48,17 @@ impl R2Backend {
             .unwrap_or("webp");
         let content_type = mime_for_ext(ext);
 
+        let action = self.bucket.put_object(Some(&self.credentials), &key);
+        let signed_url = action.sign(Duration::from_secs(3600));
+
         self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(&key)
-            .body(ByteStream::from(image.to_vec()))
-            .content_type(content_type)
+            .put(signed_url)
+            .header("Content-Type", content_type)
+            .body(image.to_vec())
             .send()
             .await
+            .context("R2 upload request failed")?
+            .error_for_status()
             .map_err(|e| anyhow::anyhow!("R2 upload failed: {e}"))?;
 
         Ok(format!("{}/{}", self.public_url, key))
