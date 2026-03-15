@@ -11,7 +11,7 @@ A CLI tool that reads an image from the clipboard, saves it as a WebP file, and 
   - **R2**: uploads to Cloudflare R2 and returns a public URL
   - **NodeBB**: uploads to a NodeBB forum via the post upload API
 - Backend selection: CLI flag > project config > global config > local (fallback)
-- WSL2 support with configurable executable path for PowerShell
+- WSL2 and native Windows support via PowerShell
 
 ## Installation
 
@@ -24,6 +24,22 @@ brew install mdpaste
 
 > Supports macOS (Apple Silicon) and Linux (x86\_64).
 > Intel Mac users can install via Cargo or Nix instead.
+
+### Windows
+
+Download the pre-built binary from the [latest GitHub Release](https://github.com/daaa1k/mdpaste/releases/latest):
+
+```
+mdpaste-windows-x86_64.exe
+```
+
+Place it somewhere on your `PATH` (e.g. `C:\Users\<you>\bin\`) and rename it to `mdpaste.exe`.
+
+Alternatively, install via Cargo (requires Rust toolchain):
+
+```sh
+cargo install mdpaste
+```
 
 ### Nix / Home Manager (recommended)
 
@@ -97,9 +113,12 @@ prefix     = "images/"   # optional key prefix
 url = "https://forum.example.com"
 ```
 
-### Global config (`~/.config/mdpaste/config.toml`)
+### Global config
 
-Stores machine-level defaults. Respects `XDG_CONFIG_HOME`.
+| Platform | Default path |
+|----------|-------------|
+| macOS / Linux | `~/.config/mdpaste/config.toml` (respects `XDG_CONFIG_HOME`) |
+| Windows | `%APPDATA%\mdpaste\config.toml` |
 
 ```toml
 backend = "local"   # default backend
@@ -109,7 +128,7 @@ account_id = "..."
 endpoint   = "https://..."   # optional, defaults to https://<account_id>.r2.cloudflarestorage.com
 
 [wsl]
-# Optional: specify absolute path when PowerShell is not in PATH
+# WSL2 only: specify absolute path when PowerShell is not in PATH
 # (e.g., when appendWindowsPath = false in /etc/wsl.conf)
 powershell_path = "/mnt/c/Program Files/PowerShell/7/pwsh.exe"
 ```
@@ -141,6 +160,17 @@ PowerShell resolution order:
 2. `powershell.exe` / `pwsh.exe` in PATH
 3. Well-known paths under `/mnt/c/`
 
+## Windows Notes
+
+On native Windows, mdpaste uses PowerShell (`System.Windows.Forms`) to access the clipboard. Both Windows PowerShell (`powershell.exe`) and PowerShell Core (`pwsh.exe`) are supported.
+
+PowerShell resolution order:
+1. `pwsh.exe` in PATH (PowerShell Core 7+, preferred)
+2. `powershell.exe` in PATH (Windows PowerShell 5.1, always present)
+3. Well-known installation paths (`%ProgramFiles%\PowerShell\`, `%WINDIR%\System32\...`)
+
+No additional configuration is required — PowerShell ships with every modern Windows installation.
+
 ## Platform Support
 
 | Platform | Image | FileDrop |
@@ -148,6 +178,7 @@ PowerShell resolution order:
 | macOS    | ✅    | ✅      |
 | Linux    | ✅    | ✅      |
 | WSL2     | ✅    | ✅      |
+| Windows  | ✅    | ✅      |
 
 ### macOS: pngpaste
 

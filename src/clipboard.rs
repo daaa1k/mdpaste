@@ -27,8 +27,14 @@ pub fn get_clipboard_images(wsl_config: Option<&WslConfig>) -> Result<Vec<Clipbo
     #[cfg(target_os = "linux")]
     return get_images_linux(wsl_config);
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    bail!("Unsupported platform: only macOS and Linux are supported");
+    #[cfg(target_os = "windows")]
+    {
+        let _ = wsl_config;
+        get_images_windows()
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    bail!("Unsupported platform: only macOS, Linux, and Windows are supported");
 }
 
 /// Convert raw image bytes (any format supported by the `image` crate) to WebP.
@@ -408,6 +414,119 @@ fn resolve_powershell(wsl_config: Option<&WslConfig>) -> Option<std::ffi::OsStri
     for path in &candidates {
         if std::path::Path::new(path).exists() {
             return Some((*path).into());
+        }
+    }
+    None
+}
+
+// ── Windows ───────────────────────────────────────────────────────────────────
+
+/// Retrieve clipboard images on native Windows via PowerShell.
+///
+/// Uses the same PowerShell commands as the WSL2 path, but file paths from
+/// `GetFileDropList()` are already native Windows paths and need no conversion.
+#[cfg(target_os = "windows")]
+fn get_images_windows() -> Result<Vec<ClipboardImage>> {
+    let ps = resolve_powershell_windows();
+
+    if let Some(ref ps) = ps {
+        let ps_image = concat!(
+            "Add-Type -Assembly System.Windows.Forms;",
+            "$img=[System.Windows.Forms.Clipboard]::GetImage();",
+            "if($img -eq $null){exit 1};",
+            "$ms=New-Object System.IO.MemoryStream;",
+            "$img.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);",
+            "$b=$ms.ToArray();",
+            "[Console]::OpenStandardOutput().Write($b,0,$b.Length)"
+        );
+        if let Ok(out) = Command::new(ps)
+            .args([
+                "-Sta",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                ps_image,
+            ])
+            .output()
+        {
+            if out.status.success() && !out.stdout.is_empty() {
+                return Ok(vec![clipboard_webp(&out.stdout)?]);
+            }
+        }
+
+        // FileDrop: paths are native Windows paths; read them directly.
+        let ps_files = concat!(
+            "[Console]::OutputEncoding=[Text.Encoding]::UTF8;",
+            "Add-Type -Assembly System.Windows.Forms;",
+            "$files=[System.Windows.Forms.Clipboard]::GetFileDropList();",
+            "if($files -eq $null -or $files.Count -eq 0){exit 1};",
+            "foreach($f in $files){Write-Output $f}"
+        );
+        if let Ok(out) = Command::new(ps)
+            .args([
+                "-Sta",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                ps_files,
+            ])
+            .output()
+        {
+            if out.status.success() && !out.stdout.is_empty() {
+                let output = String::from_utf8_lossy(&out.stdout);
+                let paths: Vec<String> = output
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .map(str::to_string)
+                    .collect();
+                if !paths.is_empty() {
+                    let images: Result<Vec<_>> = paths.iter().map(|p| file_image(p)).collect();
+                    return images;
+                }
+            }
+        }
+    }
+
+    bail!(
+        "No image found in Windows clipboard \
+         (PowerShell not found or clipboard is empty)"
+    );
+}
+
+/// Find a usable PowerShell executable on native Windows.
+///
+/// Tries `pwsh.exe` (PowerShell Core 7+) first, then `powershell.exe`
+/// (Windows PowerShell 5.1, ships with all modern Windows versions).
+/// Falls back to well-known installation paths.
+#[cfg(target_os = "windows")]
+fn resolve_powershell_windows() -> Option<std::ffi::OsString> {
+    // 1. PATH lookup: prefer pwsh (newer), fall back to powershell (older but always present)
+    for name in &["pwsh.exe", "powershell.exe"] {
+        if Command::new(name)
+            .args(["-NoProfile", "-Command", "exit 0"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            return Some((*name).into());
+        }
+    }
+    // 2. Well-known installation paths
+    if let Ok(program_files) = std::env::var("ProgramFiles") {
+        for candidate in &[
+            format!("{program_files}\\PowerShell\\7\\pwsh.exe"),
+            format!("{program_files}\\PowerShell\\pwsh.exe"),
+        ] {
+            if std::path::Path::new(candidate).exists() {
+                return Some(candidate.into());
+            }
+        }
+    }
+    if let Ok(windir) = std::env::var("WINDIR") {
+        let candidate = format!("{windir}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+        if std::path::Path::new(&candidate).exists() {
+            return Some(candidate.into());
         }
     }
     None
