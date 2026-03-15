@@ -16,10 +16,10 @@ serde = { version = "1", features = ["derive"] }
 toml = "1.0"
 anyhow = "1"
 chrono = "0.4"
-image = "0.25"
-tokio = { version = "1", features = ["full"] }
-aws-sdk-s3 = "1"
-aws-credential-types = { version = "1", features = ["hardcoded-credentials"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "tiff", "webp"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+rusty-s3 = "0.8"
+url = "2"
 reqwest = { version = "0.12", default-features = false, features = ["multipart", "cookies", "json", "rustls-tls"] }
 reqwest_cookie_store = { version = "0.8", features = ["serde"] }
 cookie_store = { version = "0.21", features = ["serde_json"] }
@@ -27,3 +27,13 @@ serde_json = "1"
 
 [dev-dependencies]
 mockito = "1"
+
+# ── Build-time optimizations ──────────────────────────────────────────────────
+# Reduce debug info from level 2 → 1 in dev/test builds.
+# Level 1 keeps file/line info for backtraces but skips per-variable DWARF,
+# cutting compile time and linker work without hurting developer experience.
+[profile.dev]
+debug = 1
+
+[profile.test]
+debug = 1

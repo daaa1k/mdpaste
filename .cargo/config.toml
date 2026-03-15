@@ -1,0 +1,5 @@
+# ── Linker ───────────────────────────────────────────────────────────────────
+# Use mold on Linux for dramatically faster link times (10-50% of GNU ld).
+# mold must be installed: `apt install mold` or provided via nix (see flake.nix).
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]

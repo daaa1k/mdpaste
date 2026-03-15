@@ -55,17 +55,19 @@ jobs:
       - name: Cache build artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Install cmake (Linux)
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Install mold (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y cmake
+        run: sudo apt-get install -y mold
 
       - name: Build release binary
         run: cargo build --release --locked --target ${{ matrix.target }}
         env:
-          # Use aws-lc-sys pre-built NASM objects on Windows to avoid
-          # installing NASM. The pre-built objects are shipped in the crate
-          # and verified against freshly compiled code on every aws-lc-rs PR.
-          AWS_LC_SYS_PREBUILT_NASM: 1
+          RUSTC_WRAPPER: sccache
+          # sccache does not support incremental compilation
+          CARGO_INCREMENTAL: "0"
 
       - name: Rename binary
         shell: bash

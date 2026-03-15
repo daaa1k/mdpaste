@@ -157,6 +157,11 @@
           src = craneLib.cleanCargoSource ./.;
           strictDeps = true;
 
+          # mold is used as the linker on Linux (see .cargo/config.toml).
+          nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+            pkgs.mold
+          ];
+
           # libiconv is required on macOS.
           buildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [
             pkgs.libiconv
@@ -208,6 +213,9 @@
           packages = [
             pkgs.rust-analyzer
             pkgs.rustfmt
+          ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+            # mold linker for faster local builds on Linux (see .cargo/config.toml)
+            pkgs.mold
           ];
         };
       }
