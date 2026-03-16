@@ -22,3 +22,13 @@ pub enum BackendChoice {
     R2,
     Nodebb,
 }
+
+impl BackendChoice {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BackendChoice::Local => "local",
+            BackendChoice::R2 => "r2",
+            BackendChoice::Nodebb => "nodebb",
+        }
+    }
+}

@@ -71,7 +71,8 @@ impl NodebbBackend {
     pub async fn save(&self, image: &[u8], filename: &str) -> Result<String> {
         let csrf = self.ensure_logged_in().await?;
 
-        let mime = mime_for_filename(filename);
+        let ext = filename.rsplit_once('.').map_or("", |(_, e)| e);
+        let mime = super::mime_for_ext(ext);
         let part = reqwest::multipart::Part::bytes(image.to_vec())
             .file_name(filename.to_string())
             .mime_str(mime)?;
@@ -298,23 +299,10 @@ fn extract_csrf(json: &Value) -> Result<String> {
 /// - `"https://example.com/forum"` → `"https://example.com"`
 /// - `"http://127.0.0.1:1234"`     → `"http://127.0.0.1:1234"`
 fn origin_of(url: &str) -> &str {
-    // Skip past "://" to find the authority start.
-    let after_scheme = url.find("://").map(|i| i + 3).unwrap_or(0);
-    // The first '/' after the authority marks where the path begins.
-    match url[after_scheme..].find('/') {
-        Some(path_start) => &url[..after_scheme + path_start],
-        None => url,
-    }
-}
-
-/// Map a filename's extension to its MIME type.
-fn mime_for_filename(filename: &str) -> &'static str {
-    match filename.rsplit('.').next().unwrap_or("") {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        _ => "image/webp",
-    }
+    let after_scheme = url.split_once("://").map_or(0, |(s, _)| s.len() + 3);
+    url[after_scheme..]
+        .find('/')
+        .map_or(url, |i| &url[..after_scheme + i])
 }
 
 #[cfg(test)]
@@ -368,23 +356,6 @@ mod tests {
     fn test_origin_of_no_scheme() {
         // Gracefully handles a URL without "://".
         assert_eq!(origin_of("example.com/path"), "example.com");
-    }
-
-    // ── mime_for_filename ─────────────────────────────────────────────────────
-
-    #[test]
-    fn test_mime_for_filename_known_types() {
-        assert_eq!(mime_for_filename("image.png"), "image/png");
-        assert_eq!(mime_for_filename("photo.jpg"), "image/jpeg");
-        assert_eq!(mime_for_filename("photo.jpeg"), "image/jpeg");
-        assert_eq!(mime_for_filename("anim.gif"), "image/gif");
-        assert_eq!(mime_for_filename("screenshot.webp"), "image/webp");
-    }
-
-    #[test]
-    fn test_mime_for_filename_unknown_defaults_to_webp() {
-        assert_eq!(mime_for_filename("file.bmp"), "image/webp");
-        assert_eq!(mime_for_filename("file"), "image/webp");
     }
 
     // ── session cookie persistence ────────────────────────────────────────────
