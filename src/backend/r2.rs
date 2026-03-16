@@ -52,7 +52,7 @@ impl R2Backend {
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("webp");
-        let content_type = mime_for_ext(ext);
+        let content_type = super::mime_for_ext(ext);
 
         self.client
             .put_object()
@@ -62,25 +62,15 @@ impl R2Backend {
             .content_type(content_type)
             .send()
             .await
-            .map_err(|e| anyhow::anyhow!("R2 upload failed: {e}"))?;
+            .context("R2 upload failed")?;
 
         Ok(format!("{}/{}", self.public_url, key))
     }
 }
 
-/// Map a lowercase file extension to its MIME type.
-fn mime_for_ext(ext: &str) -> &'static str {
-    match ext {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        _ => "image/webp",
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::super::mime_for_ext;
 
     #[test]
     fn test_mime_for_ext_known_types() {

@@ -23,11 +23,7 @@ async fn run() -> Result<()> {
 
     let images = clipboard::get_clipboard_images(config.global.wsl.as_ref())?;
 
-    let cli_backend = cli.backend.as_ref().map(|b| match b {
-        BackendChoice::Local => "local",
-        BackendChoice::R2 => "r2",
-        BackendChoice::Nodebb => "nodebb",
-    });
+    let cli_backend = cli.backend.as_ref().map(BackendChoice::as_str);
 
     match config.effective_backend(cli_backend).as_str() {
         "nodebb" => {

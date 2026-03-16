@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::process::Command;
 
 use crate::config::WslConfig;
@@ -39,14 +39,13 @@ pub fn get_clipboard_images(wsl_config: Option<&WslConfig>) -> Result<Vec<Clipbo
 
 /// Convert raw image bytes (any format supported by the `image` crate) to WebP.
 fn convert_to_webp(raw: &[u8]) -> Result<Vec<u8>> {
-    let img =
-        image::load_from_memory(raw).map_err(|e| anyhow::anyhow!("Failed to decode image: {e}"))?;
+    let img = image::load_from_memory(raw).context("Failed to decode image")?;
     let mut webp_data = Vec::new();
     img.write_to(
         &mut std::io::Cursor::new(&mut webp_data),
         image::ImageFormat::WebP,
     )
-    .map_err(|e| anyhow::anyhow!("Failed to encode as WebP: {e}"))?;
+    .context("Failed to encode as WebP")?;
     Ok(webp_data)
 }
 
@@ -61,8 +60,7 @@ fn clipboard_webp(raw: &[u8]) -> Result<ClipboardImage> {
 
 /// Read a file and return it as a [`ClipboardImage`], preserving the original extension.
 fn file_image(path: &str) -> Result<ClipboardImage> {
-    let data =
-        std::fs::read(path).map_err(|e| anyhow::anyhow!("Failed to read file '{path}': {e}"))?;
+    let data = std::fs::read(path).with_context(|| format!("Failed to read file '{path}'"))?;
     let extension = std::path::Path::new(path)
         .extension()
         .and_then(|e| e.to_str())
